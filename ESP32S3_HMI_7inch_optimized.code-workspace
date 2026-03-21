@@ -1,0 +1,32 @@
+{
+  "folders": [
+    {
+      "path": "."
+    }
+  ],
+  "settings": {
+    "platformio-ide.disablePIOHomeStartup": true,
+    "files.watcherExclude": {
+      "**/.git/**": true,
+      "**/.pio/**": true,
+      "**/node_modules/**": true,
+      "**/.cache/**": true,
+      "**/build/**": true
+    },
+    "search.exclude": {
+      "**/.git/**": true,
+      "**/.pio/**": true,
+      "**/node_modules/**": true,
+      "**/.cache/**": true,
+      "**/build/**": true
+    },
+    "files.exclude": {
+      "**/.pio": true,
+      "**/.cache": true,
+      "**/node_modules": true
+    },
+    "C_Cpp.intelliSenseCacheSize": 512,
+    "C_Cpp.workspaceParsingPriority": "low",
+    "C_Cpp.exclusionPolicy": "checkFilesAndFolders"
+  }
+}

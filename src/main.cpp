@@ -1,6 +1,7 @@
 #include <Arduino.h>
 #include <stdio.h>
 #include <string.h>
+#include "esp_heap_caps.h"
 
 #include "lvgl_port.h"       // LVGL porting functions for integration
 
@@ -19,13 +20,27 @@ struct HmiDebugState {
     bool mega1Online = false;
     bool mega2Online = false;
     bool safetyLock = false;
+    bool ethConnected = false;
+    bool systemReady = false;
+    uint32_t wsClients = 0;
     char lastMsgType[16] = "boot";
+
+    // Bereits für state-lite vorbereitet; aktuell noch nicht im Overlay dargestellt.
+    bool startupM1SelftestDone = false;
+    bool startupM2SelftestDone = false;
+    bool safetyAckRequired = false;
+    bool safetyNotausActive = false;
+    bool safetyPowerOn = false;
+    bool mega1ModeAuto = false;
+    bool actionCanAck = false;
+    bool actionCanPowerOn = false;
+    bool actionCanAuto = false;
 };
 
 static HmiDebugState g_dbg;
 static lv_obj_t* g_debugLabel = nullptr;
 static uint32_t g_lastDebugOverlayUpdateMs = 0;
-static char g_uartFrameBuf[UART_FRAME_BUF_SIZE];
+static char* g_uartFrameBuf = nullptr;
 static size_t g_uartFramePos = 0;
 static uint32_t g_lastRxMs = 0;
 static uint32_t g_rxDepth = 0;
@@ -141,17 +156,111 @@ static bool jsonFindString(const char* json, const char* key, char* out, size_t 
     return i > 0;
 }
 
-static void hmiDebugExtractStatusFromJson(const char* json) {
-    bool b = false;
+static bool jsonFindUInt32(const char* json, const char* key, uint32_t* outValue) {
+    if (!json || !key || !outValue) return false;
 
+    const char* p = strstr(json, key);
+    if (!p) return false;
+
+    p += strlen(key);
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+    if (*p != ':') return false;
+    ++p;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') ++p;
+
+    if (*p < '0' || *p > '9') return false;
+
+    *outValue = (uint32_t)strtoul(p, nullptr, 10);
+    return true;
+}
+
+static void hmiDebugExtractStatusFromJson(const char* json) {
+    if (!json) {
+        return;
+    }
+
+    bool b = false;
+    uint32_t u32 = 0;
+
+    // Top-level / legacy shortcuts
     if (jsonFindString(json, "\"ip\"", g_dbg.ethIp, sizeof(g_dbg.ethIp))) {
     }
+    if (jsonFindBool(json, "\"mega1Online\"", &b)) {
+        g_dbg.mega1Online = b;
+    }
+
+    // Section-based merge semantics:
+    // Nur überschreiben, wenn das Feld im jeweiligen Abschnitt wirklich vorhanden ist.
     const char* mega1 = strstr(json, "\"mega1\"");
-    if (mega1 && jsonFindBool(mega1, "\"online\"", &b)) g_dbg.mega1Online = b;
+    if (mega1) {
+        if (jsonFindBool(mega1, "\"online\"", &b)) {
+            g_dbg.mega1Online = b;
+        }
+        if (jsonFindBool(mega1, "\"modeAuto\"", &b)) {
+            g_dbg.mega1ModeAuto = b;
+        }
+    }
+
     const char* mega2 = strstr(json, "\"mega2\"");
-    if (mega2 && jsonFindBool(mega2, "\"online\"", &b)) g_dbg.mega2Online = b;
+    if (mega2 && jsonFindBool(mega2, "\"online\"", &b)) {
+        g_dbg.mega2Online = b;
+    }
+
     const char* safety = strstr(json, "\"safety\"");
-    if (safety && jsonFindBool(safety, "\"lock\"", &b)) g_dbg.safetyLock = b;
+    if (safety) {
+        if (jsonFindBool(safety, "\"lock\"", &b)) {
+            g_dbg.safetyLock = b;
+        }
+        if (jsonFindBool(safety, "\"ackRequired\"", &b)) {
+            g_dbg.safetyAckRequired = b;
+        }
+        if (jsonFindBool(safety, "\"notausActive\"", &b)) {
+            g_dbg.safetyNotausActive = b;
+        }
+        if (jsonFindBool(safety, "\"powerOn\"", &b)) {
+            g_dbg.safetyPowerOn = b;
+        }
+    }
+
+    const char* eth = strstr(json, "\"eth\"");
+    if (eth) {
+        if (jsonFindBool(eth, "\"connected\"", &b)) {
+            g_dbg.ethConnected = b;
+        }
+        if (jsonFindString(eth, "\"ip\"", g_dbg.ethIp, sizeof(g_dbg.ethIp))) {
+        }
+    }
+
+    const char* startup = strstr(json, "\"startup\"");
+    if (startup) {
+        if (jsonFindBool(startup, "\"ready\"", &b)) {
+            g_dbg.systemReady = b;
+        }
+        if (jsonFindBool(startup, "\"m1SelftestDone\"", &b)) {
+            g_dbg.startupM1SelftestDone = b;
+        }
+        if (jsonFindBool(startup, "\"m2SelftestDone\"", &b)) {
+            g_dbg.startupM2SelftestDone = b;
+        }
+    }
+
+    const char* actions = strstr(json, "\"actions\"");
+    if (actions) {
+        if (jsonFindBool(actions, "\"canAck\"", &b)) {
+            g_dbg.actionCanAck = b;
+        }
+        if (jsonFindBool(actions, "\"canPowerOn\"", &b)) {
+            g_dbg.actionCanPowerOn = b;
+        }
+        if (jsonFindBool(actions, "\"canAuto\"", &b)) {
+            g_dbg.actionCanAuto = b;
+        }
+    }
+
+    const char* ws = strstr(json, "\"wsClients\"");
+    if (ws && jsonFindUInt32(ws, "\"base\"", &u32)) {
+        g_dbg.wsClients = u32;
+    }
 }
 
 static void createDebugOverlay() {
@@ -178,8 +287,16 @@ static void createDebugOverlay() {
         "rxFrames: 0\n"
         "jsonOk: 0\n"
         "jsonErr: 0\n"
+        "uptime_s: 0\n"
+        "heapInt: 0\n"
+        "blkInt: 0\n"
+        "heapPs: 0\n"
+        "blkPs: 0\n"
         "rxOverflow: 0\n"
         "ETH: -\n"
+        "LINK: down\n"
+        "SYS: boot\n"
+        "WS: 0\n"
         "M1: off\n"
         "M2: off\n"
         "SAFE: off\n"
@@ -190,7 +307,13 @@ static void createDebugOverlay() {
 static void updateDebugOverlay() {
     if (!g_debugLabel) return;
 
-    char buf[320];
+    const uint32_t uptimeS = millis() / 1000UL;
+    const size_t freeInt = heap_caps_get_free_size(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t largestInt = heap_caps_get_largest_free_block(MALLOC_CAP_INTERNAL | MALLOC_CAP_8BIT);
+    const size_t freePs = heap_caps_get_free_size(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+    const size_t largestPs = heap_caps_get_largest_free_block(MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT);
+
+    char buf[512];
     snprintf(
         buf,
         sizeof(buf),
@@ -199,8 +322,16 @@ static void updateDebugOverlay() {
         "rxFrames: %lu\n"
         "jsonOk: %lu\n"
         "jsonErr: %lu\n"
+        "uptime_s: %lu\n"
+        "heapInt: %lu\n"
+        "blkInt: %lu\n"
+        "heapPs: %lu\n"
+        "blkPs: %lu\n"
         "rxOverflow: %lu\n"
         "ETH: %s\n"
+        "LINK: %s\n"
+        "SYS: %s\n"
+        "WS: %lu\n"
         "M1: %s\n"
         "M2: %s\n"
         "SAFE: %s\n"
@@ -210,8 +341,16 @@ static void updateDebugOverlay() {
         (unsigned long)g_dbg.rxFrames,
         (unsigned long)g_dbg.jsonOk,
         (unsigned long)g_dbg.jsonErr,
+        (unsigned long)uptimeS,
+        (unsigned long)freeInt,
+        (unsigned long)largestInt,
+        (unsigned long)freePs,
+        (unsigned long)largestPs,
         (unsigned long)g_dbg.rxOverflow,
         g_dbg.ethIp,
+        g_dbg.ethConnected ? "OK" : "DOWN",
+        g_dbg.systemReady ? "READY" : "BOOT",
+        (unsigned long)g_dbg.wsClients,
         g_dbg.mega1Online ? "on" : "off",
         g_dbg.mega2Online ? "on" : "off",
         g_dbg.safetyLock ? "LOCK" : "ok",
@@ -258,7 +397,7 @@ static void jsonFrameProcessChar(char c) {
             g_rxActive = true;
             g_rxDepth = 1;
             g_uartFramePos = 0;
-            g_uartFrameBuf[g_uartFramePos++] = c;
+            if (g_uartFrameBuf) g_uartFrameBuf[g_uartFramePos++] = c;
         }
         return;
     }
@@ -308,6 +447,10 @@ static void jsonFrameProcessChar(char c) {
 }
 
 static void pollUartRx() {
+    if (!g_uartFrameBuf) {
+        return;
+    }
+
     while (Serial0.available() > 0) {
         const char c = (char)Serial0.read();
 
@@ -330,6 +473,17 @@ void setup() {
     wavesahre_rgb_lcd_bl_on();
 
     ESP_ERROR_CHECK(lvgl_port_init(panel_handle, tp_handle));
+
+    g_uartFrameBuf = (char*)heap_caps_malloc(
+        UART_FRAME_BUF_SIZE,
+        MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT
+    );
+    if (!g_uartFrameBuf) {
+        Serial0.println("ERROR: PSRAM alloc for UART frame buffer failed");
+        while (true) {
+            delay(1000);
+        }
+    }
 
     g_dbg.uartConnected = false;
     hmiDebugSetLastMsg("boot");
