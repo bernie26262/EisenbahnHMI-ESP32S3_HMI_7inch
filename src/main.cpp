@@ -25,9 +25,14 @@ struct HmiDebugState {
     uint32_t wsClients = 0;
     char lastMsgType[16] = "boot";
 
-    // Bereits für state-lite vorbereitet; aktuell noch nicht im Overlay dargestellt.
+    // state-lite / action fields
     bool startupM1SelftestDone = false;
     bool startupM2SelftestDone = false;
+    bool startupM1SelftestRunning = false;
+    bool startupM2SelftestRunning = false;
+    bool startupChecklistActive = false;
+    bool startupM1Needs = false;
+    bool startupM2Needs = false;
     bool safetyAckRequired = false;
     bool safetyNotausActive = false;
     bool safetyPowerOn = false;
@@ -35,9 +40,45 @@ struct HmiDebugState {
     bool actionCanAck = false;
     bool actionCanPowerOn = false;
     bool actionCanAuto = false;
+    bool actionCanStartM1Selftest = false;
+    bool actionCanStartM2Selftest = false;
+    bool actionCanStartupConfirm = false;
+    bool actionCanWrite = false;
+    uint32_t txFrames = 0;
+    uint32_t txErr = 0;
+    uint32_t txDropped = 0;
+    char lastTx[24] = "-";
+    bool diagActive = false;
+    char diagOwner[16] = "-";
+};
+
+struct HmiUi {
+    lv_obj_t* root = nullptr;
+    lv_obj_t* statusLabel = nullptr;
+    lv_obj_t* detailLabel = nullptr;
+    lv_obj_t* m1TestBtn = nullptr;
+    lv_obj_t* m2TestBtn = nullptr;
+    lv_obj_t* m1TestBtnLabel = nullptr;
+    lv_obj_t* m2TestBtnLabel = nullptr;
+    lv_obj_t* ackBtn = nullptr;
+    lv_obj_t* powerBtn = nullptr;
+    lv_obj_t* autoBtn = nullptr;
+    lv_obj_t* ackBtnLabel = nullptr;
+    lv_obj_t* powerBtnLabel = nullptr;
+    lv_obj_t* autoBtnLabel = nullptr;
+
+    lv_obj_t* startupOverlay = nullptr;
+    lv_obj_t* startupPanel = nullptr;
+    lv_obj_t* startupTitle = nullptr;
+    lv_obj_t* startupText = nullptr;
+    lv_obj_t* startupStatus = nullptr;
+    lv_obj_t* startupM1Btn = nullptr;
+    lv_obj_t* startupM2Btn = nullptr;
+    lv_obj_t* startupAckBtn = nullptr;
 };
 
 static HmiDebugState g_dbg;
+static HmiUi g_ui;
 static lv_obj_t* g_debugLabel = nullptr;
 static uint32_t g_lastDebugOverlayUpdateMs = 0;
 static char* g_uartFrameBuf = nullptr;
@@ -45,7 +86,18 @@ static size_t g_uartFramePos = 0;
 static uint32_t g_lastRxMs = 0;
 static uint32_t g_rxDepth = 0;
 static bool g_rxInString = false;
+static bool g_startupSessionActive = false;
 static bool g_rxEscape = false;
+
+static void hmiUiUpdate();
+static void updateDebugOverlay();
+static void hmiUiOnAckClicked(lv_event_t* e);
+static void hmiUiOnM1TestClicked(lv_event_t* e);
+static void hmiUiOnM2TestClicked(lv_event_t* e);
+static void hmiUiOnStartupAckClicked(lv_event_t* e);
+static void hmiUiOnPowerClicked(lv_event_t* e);
+static void hmiUiOnAutoClicked(lv_event_t* e);
+
 static bool g_rxActive = false;
 static uint32_t g_lastDummyTickMs = 0;
 
@@ -58,6 +110,178 @@ static void hmiDebugSetLastMsg(const char* msg) {
 
     strncpy(g_dbg.lastMsgType, msg, sizeof(g_dbg.lastMsgType) - 1);
     g_dbg.lastMsgType[sizeof(g_dbg.lastMsgType) - 1] = '\0';
+}
+
+static void hmiTxSetLast(const char* msg) {
+    if (!msg) {
+        strncpy(g_dbg.lastTx, "null", sizeof(g_dbg.lastTx) - 1);
+        g_dbg.lastTx[sizeof(g_dbg.lastTx) - 1] = '\0';
+        return;
+    }
+
+    strncpy(g_dbg.lastTx, msg, sizeof(g_dbg.lastTx) - 1);
+    g_dbg.lastTx[sizeof(g_dbg.lastTx) - 1] = '\0';
+}
+
+static bool hmiCanWriteNow() {
+    return g_dbg.actionCanWrite;
+}
+
+static bool hmiCanSendM1TestNow() {
+    return g_dbg.actionCanStartM1Selftest;
+}
+
+static bool hmiCanSendM2TestNow() {
+    return g_dbg.actionCanStartM2Selftest;
+}
+
+static bool hmiCanSendStartupConfirmNow() {
+    return g_dbg.actionCanStartupConfirm;
+}
+
+static bool hmiCanSendAckNow() {
+    return g_dbg.actionCanAck;
+}
+
+static bool hmiCanSendPowerNow() {
+    return g_dbg.actionCanPowerOn;
+}
+
+static bool hmiCanSendAutoNow() {
+    return g_dbg.actionCanAuto;
+}
+
+
+
+static bool hmiSendActionCommand(const char* action) {
+    if (!action || !*action) {
+        g_dbg.txErr++;
+        hmiTxSetLast("bad-action");
+        return false;
+    }
+
+    // Zentrale Stelle für das HMI->ETH Command-Format.
+    // Falls ETH andere Namen erwartet, bitte nur hier anpassen.
+    char line[96];
+    const int len = snprintf(
+        line,
+        sizeof(line),
+        "{\"type\":\"action\",\"action\":\"%s\"}",
+        action
+    );
+
+    if (len <= 0 || (size_t)len >= sizeof(line)) {
+        g_dbg.txErr++;
+        hmiTxSetLast("fmt-err");
+        return false;
+    }
+
+    size_t written = 0;
+    written += Serial0.write((const uint8_t*)line, (size_t)len);
+    written += Serial0.write((uint8_t)'\n');
+    Serial0.flush();
+
+    if (written != (size_t)len + 1U) {
+        g_dbg.txErr++;
+        hmiTxSetLast("uart-err");
+        return false;
+    }
+
+    g_dbg.txFrames++;
+    hmiTxSetLast(action);
+    return true;
+}
+
+static bool hmiSendSetModeCommand(uint8_t mode) {
+    char line[96];
+    const int len = snprintf(
+        line,
+        sizeof(line),
+        "{\"type\":\"action\",\"action\":\"m1SetMode\",\"mode\":%u}",
+        (unsigned)mode
+    );
+
+    if (len <= 0 || (size_t)len >= sizeof(line)) {
+        g_dbg.txErr++;
+        hmiTxSetLast("fmt-mode");
+        return false;
+    }
+
+    size_t written = 0;
+    written += Serial0.write((const uint8_t*)line, (size_t)len);
+    written += Serial0.write((uint8_t)'\n');
+    Serial0.flush();
+
+    if (written != (size_t)len + 1U) {
+        g_dbg.txErr++;
+        hmiTxSetLast("uart-mode");
+        return false;
+    }
+
+    g_dbg.txFrames++;
+    hmiTxSetLast(mode == 1 ? "m1SetMode:auto" : "m1SetMode:manual");
+    return true;
+}
+
+static void hmiUiAfterTxAttempt() {
+    if (g_ui.detailLabel || g_ui.statusLabel) {
+        hmiUiUpdate();
+    }
+    if (g_debugLabel) {
+        updateDebugOverlay();
+    }
+    g_dbg.lastMsgType[sizeof(g_dbg.lastMsgType) - 1] = '\0';
+}
+
+static bool hmiSendStartupConfirmSequence() {
+    bool ok = true;
+
+    // Wie WebUI: sicherheitshalber vor der finalen Quittierung AUTO anfordern.
+    if (g_dbg.mega1Online) {
+        ok = hmiSendSetModeCommand(1) && ok;
+    }
+
+    if (g_dbg.startupM1Needs) {
+        ok = hmiSendActionCommand("markMega1ChecklistDone") && ok;
+    }
+
+    if (g_dbg.startupM2Needs) {
+        ok = hmiSendActionCommand("markMega2ChecklistDone") && ok;
+    }
+
+    // Nur falls wirklich ein Safety-Lock aktiv ist.
+    if (g_dbg.safetyLock) {
+        ok = hmiSendActionCommand("safetyAck") && ok;
+    }
+
+    if (!ok) {
+        hmiTxSetLast("startupConfirmErr");
+    } else {
+        hmiTxSetLast("startupConfirm");
+    }
+
+    return ok;
+}
+
+static bool hmiStartupOverlayActive() {
+    if (g_dbg.startupChecklistActive) {
+        g_startupSessionActive = true;
+    }
+
+    // Session erst verlassen, wenn die Checklist nicht mehr aktiv ist
+    // und auch keine offenen Schritte mehr vorhanden sind.
+    if (!g_dbg.startupChecklistActive &&
+        !g_dbg.startupM1Needs &&
+        !g_dbg.startupM2Needs) {
+        g_startupSessionActive = false;
+    }
+
+    return g_startupSessionActive;
+}
+
+static bool hmiStartupAllDone() {
+    return ((!g_dbg.startupM1Needs) || g_dbg.startupM1SelftestDone) &&
+           ((!g_dbg.startupM2Needs) || g_dbg.startupM2SelftestDone);
 }
 
 static void hmiDebugSetMsgTypeFromJson(const char* json) {
@@ -97,8 +321,6 @@ static void hmiDebugSetMsgTypeFromJson(const char* json) {
     char msg[sizeof(g_dbg.lastMsgType)];
     size_t i = 0;
     while (*p && *p != '"' && i < sizeof(msg) - 1) {
-        // einfache Kopie, keine Escape-Logik nötig hier
-        // (wir sind bereits im String)
         msg[i++] = *p++;
     }
     msg[i] = '\0';
@@ -174,6 +396,423 @@ static bool jsonFindUInt32(const char* json, const char* key, uint32_t* outValue
     return true;
 }
 
+static const char* hmiUiCtrlText() {
+    return g_dbg.diagActive ? "WEB" : "FREE";
+}
+
+static const char* hmiUiWriteText() {
+    return g_dbg.actionCanWrite ? "OK" : "LOCK";
+}
+
+static const char* hmiSelftestText(bool done, bool running) {
+    if (done) return "OK";
+    if (running) return "RUN";
+    return "OPEN";
+}
+
+static void hmiUiOnM1TestClicked(lv_event_t* e) {
+    (void)e;
+    if (!hmiCanSendM1TestNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-m1test");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    hmiSendActionCommand("m1SelftestStart");
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnM2TestClicked(lv_event_t* e) {
+    (void)e;
+    if (!hmiCanSendM2TestNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-m2test");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    hmiSendActionCommand("sbhfSelftestStartup");
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnStartupAckClicked(lv_event_t* e) {
+    (void)e;
+    if (!hmiCanSendStartupConfirmNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-startupAck");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    if (!hmiStartupAllDone()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-startupNotDone");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    hmiSendStartupConfirmSequence();
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnAckClicked(lv_event_t* e) {
+    (void)e;
+    if (!hmiCanSendAckNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-ack");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    hmiSendActionCommand("safetyAck");
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnPowerClicked(lv_event_t* e) {
+    (void)e;
+    if (!hmiCanSendPowerNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-power");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    // Semantik: "Power einschalten", nicht toggeln.
+    hmiSendActionCommand("powerOn");
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnAutoClicked(lv_event_t* e) {
+    (void)e;
+    if (!hmiCanSendAutoNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-auto");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    hmiSendSetModeCommand(1);
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiSetButtonEnabled(lv_obj_t* btn, lv_obj_t* label, bool enabled, const char* text) {
+    if (!btn) return;
+
+    if (label) {
+        lv_label_set_text(label, text ? text : "-");
+    }
+
+    if (enabled) {
+        // Nicht hart deaktivieren. Sonst ist für den Nutzer nicht sichtbar,
+        // dass der Tap angekommen ist und lokal als "drop-*" bewertet wurde.
+        lv_obj_clear_state(btn, LV_STATE_DISABLED);
+        lv_obj_set_style_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_text_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    } else {
+        // Nur optisch sperren, aber weiter klickbar lassen.
+        // Die echte Freigabelogik bleibt in hmiCanSend*Now().
+        lv_obj_clear_state(btn, LV_STATE_DISABLED);
+        lv_obj_set_style_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_30, 0);
+        lv_obj_set_style_border_opa(btn, LV_OPA_60, 0);
+        lv_obj_set_style_text_opa(btn, LV_OPA_COVER, 0);
+        lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+    }
+}
+
+static const char* hmiStartupStateText(bool needs, bool done, bool running) {
+    if (!needs) return "nicht erforderlich";
+    if (done) return "erledigt";
+    if (running) return "läuft...";
+    return "offen";
+}
+
+static void hmiStartupOverlayUpdate() {
+    if (!g_ui.startupOverlay || !g_ui.startupStatus || !g_ui.startupM1Btn || !g_ui.startupM2Btn || !g_ui.startupAckBtn) {
+        return;
+    }
+
+    const bool active = hmiStartupOverlayActive();
+    if (active) {
+        lv_obj_clear_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    char buf[384];
+    snprintf(
+        buf,
+        sizeof(buf),
+        "SBHF-Weichen Selftest (Mega2): %s\n"
+        "Weichen Selftest (Mega1): %s",
+        hmiStartupStateText(g_dbg.startupM2Needs, g_dbg.startupM2SelftestDone, g_dbg.startupM2SelftestRunning),
+        hmiStartupStateText(g_dbg.startupM1Needs, g_dbg.startupM1SelftestDone, g_dbg.startupM1SelftestRunning)
+    );
+
+    if (g_ui.startupText) {
+        lv_label_set_text(
+            g_ui.startupText,
+            hmiStartupAllDone()
+                ? "System betriebsbereit? Bitte quittieren."
+                : "Bitte die folgenden Punkte abarbeiten, bevor Power eingeschaltet werden kann."
+        );
+    }
+    lv_label_set_text(g_ui.startupStatus, buf);
+
+    // Overlay-Buttons haben kein separates Label-Handle, daher label=nullptr zulassen.
+    hmiUiSetButtonEnabled(g_ui.startupM2Btn, nullptr, hmiCanSendM2TestNow(), "SBHF TEST");
+    hmiUiSetButtonEnabled(g_ui.startupM1Btn, nullptr, hmiCanSendM1TestNow(), "MEGA1 TEST");
+
+    if (hmiStartupAllDone()) {
+        lv_obj_clear_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
+        hmiUiSetButtonEnabled(g_ui.startupAckBtn, nullptr, hmiCanSendStartupConfirmNow(), "QUITTIEREN");
+    } else {
+        lv_obj_add_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+
+static void hmiUiUpdate() {
+    if (!g_ui.statusLabel || !g_ui.detailLabel) {
+        return;
+    }
+
+    char statusBuf[256];
+    snprintf(
+        statusBuf,
+        sizeof(statusBuf),
+        "ETH: %s   IP: %s\n"
+        "M1: %s   M2: %s   SYS: %s\n"
+        "WS: %lu   CTRL: %s   WRITE: %s",
+        g_dbg.ethConnected ? "OK" : "DOWN",
+        g_dbg.ethIp,
+        g_dbg.mega1Online ? (g_dbg.mega1ModeAuto ? "AUTO" : "ON") : "OFF",
+        g_dbg.mega2Online ? "ON" : "OFF",
+        g_dbg.systemReady ? "READY" : "BOOT",
+        (unsigned long)g_dbg.wsClients,
+        hmiUiCtrlText(),
+        hmiUiWriteText()
+    );
+    lv_label_set_text(g_ui.statusLabel, statusBuf);
+
+    char detailBuf[256];
+    snprintf(
+        detailBuf,
+        sizeof(detailBuf),
+        "SAFE: %s   ACK: %s   PWR: %s\n"
+        "M1-ST: %s   M2-ST: %s   NA: %s\n"
+        "canM1:%s canM2:%s canAck:%s canPwr:%s canAuto:%s\n"
+        "diagOwner: %s   lastMsg: %s   lastTx: %s",
+        g_dbg.safetyLock ? "LOCK" : "OK",
+        g_dbg.safetyAckRequired ? "REQ" : "-",
+        g_dbg.safetyPowerOn ? "ON" : "OFF",
+        hmiSelftestText(g_dbg.startupM1SelftestDone, g_dbg.startupM1SelftestRunning),
+        hmiSelftestText(g_dbg.startupM2SelftestDone, g_dbg.startupM2SelftestRunning),
+        g_dbg.safetyNotausActive ? "ON" : "OFF",
+        g_dbg.actionCanStartM1Selftest ? "1" : "0",
+        g_dbg.actionCanStartM2Selftest ? "1" : "0",
+        g_dbg.actionCanAck ? "1" : "0",
+        g_dbg.actionCanPowerOn ? "1" : "0",
+        g_dbg.actionCanAuto ? "1" : "0",
+        g_dbg.diagOwner,
+        g_dbg.lastMsgType,
+        g_dbg.lastTx
+    );
+    lv_label_set_text(g_ui.detailLabel, detailBuf);
+
+    hmiUiSetButtonEnabled(
+        g_ui.m1TestBtn,
+        g_ui.m1TestBtnLabel,
+        hmiCanSendM1TestNow(),
+        "M1 TEST"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.m2TestBtn,
+        g_ui.m2TestBtnLabel,
+        hmiCanSendM2TestNow(),
+        "M2 TEST"
+    );
+
+    hmiUiSetButtonEnabled(
+        g_ui.ackBtn,
+        g_ui.ackBtnLabel,
+        g_dbg.actionCanAck,
+        "ACK"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.powerBtn,
+        g_ui.powerBtnLabel,
+        g_dbg.actionCanPowerOn,
+        g_dbg.safetyPowerOn ? "POWER ON" : "POWER"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.autoBtn,
+        g_ui.autoBtnLabel,
+        g_dbg.actionCanAuto,
+        g_dbg.mega1ModeAuto ? "AUTO ON" : "AUTO"
+    );
+
+    hmiStartupOverlayUpdate();
+}
+
+static lv_obj_t* hmiUiCreateActionButton(lv_obj_t* parent, lv_obj_t** outLabel, const char* text) {
+    lv_obj_t* btn = lv_btn_create(parent);
+    lv_obj_set_height(btn, 56);
+    lv_obj_set_style_radius(btn, 10, 0);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* label = lv_label_create(btn);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+
+    if (outLabel) {
+        *outLabel = label;
+    }
+    return btn;
+}
+
+static lv_obj_t* hmiUiCreateOverlayButton(lv_obj_t* parent, const char* text) {
+    lv_obj_t* btn = lv_btn_create(parent);
+    lv_obj_set_height(btn, 52);
+    lv_obj_set_style_radius(btn, 10, 0);
+    lv_obj_t* label = lv_label_create(btn);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+    return btn;
+}
+
+static void createMainUi() {
+    lv_obj_t* screen = lv_scr_act();
+
+    g_ui.root = lv_obj_create(screen);
+    lv_obj_set_size(g_ui.root, lv_pct(100), lv_pct(100));
+    lv_obj_align(g_ui.root, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.root, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.root, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.root, 12, 0);
+    lv_obj_set_layout(g_ui.root, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.root, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(g_ui.root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+
+    lv_obj_t* title = lv_label_create(g_ui.root);
+    lv_label_set_text(title, "Elektrische Eisenbahn HMI");
+    lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+
+    g_ui.statusLabel = lv_label_create(g_ui.root);
+    lv_obj_set_width(g_ui.statusLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.statusLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.statusLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.statusLabel, lv_color_white(), 0);
+
+    g_ui.detailLabel = lv_label_create(g_ui.root);
+    lv_obj_set_width(g_ui.detailLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.detailLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.detailLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.detailLabel, lv_color_white(), 0);
+
+    lv_obj_t* btnRowTop = lv_obj_create(g_ui.root);
+    lv_obj_set_width(btnRowTop, lv_pct(100));
+    lv_obj_set_height(btnRowTop, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(btnRowTop, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRowTop, 0, 0);
+    lv_obj_set_style_pad_left(btnRowTop, 0, 0);
+    lv_obj_set_style_pad_right(btnRowTop, 0, 0);
+    lv_obj_set_style_pad_top(btnRowTop, 8, 0);
+    lv_obj_set_style_pad_bottom(btnRowTop, 0, 0);
+    lv_obj_set_layout(btnRowTop, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(btnRowTop, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(btnRowTop, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(btnRowTop, 8, 0);
+    lv_obj_set_style_pad_column(btnRowTop, 12, 0);
+
+    lv_obj_t* btnRowBottom = lv_obj_create(g_ui.root);
+    lv_obj_set_width(btnRowBottom, lv_pct(100));
+    lv_obj_set_height(btnRowBottom, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(btnRowBottom, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(btnRowBottom, 0, 0);
+    lv_obj_set_style_pad_left(btnRowBottom, 0, 0);
+    lv_obj_set_style_pad_right(btnRowBottom, 0, 0);
+    lv_obj_set_style_pad_top(btnRowBottom, 8, 0);
+    lv_obj_set_style_pad_bottom(btnRowBottom, 0, 0);
+    lv_obj_set_layout(btnRowBottom, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(btnRowBottom, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(btnRowBottom, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(btnRowBottom, 8, 0);
+    lv_obj_set_style_pad_column(btnRowBottom, 12, 0);
+    
+    g_ui.m1TestBtn = hmiUiCreateActionButton(btnRowTop, &g_ui.m1TestBtnLabel, "M1 TEST");
+    lv_obj_set_width(g_ui.m1TestBtn, 150);
+    lv_obj_add_event_cb(g_ui.m1TestBtn, hmiUiOnM1TestClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.m2TestBtn = hmiUiCreateActionButton(btnRowTop, &g_ui.m2TestBtnLabel, "M2 TEST");
+    lv_obj_set_width(g_ui.m2TestBtn, 150);
+    lv_obj_add_event_cb(g_ui.m2TestBtn, hmiUiOnM2TestClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.ackBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.ackBtnLabel, "ACK");
+    lv_obj_set_width(g_ui.ackBtn, 110);
+    lv_obj_add_event_cb(g_ui.ackBtn, hmiUiOnAckClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.powerBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.powerBtnLabel, "POWER");
+    lv_obj_set_width(g_ui.powerBtn, 140);
+    lv_obj_add_event_cb(g_ui.powerBtn, hmiUiOnPowerClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.autoBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.autoBtnLabel, "AUTO");
+    lv_obj_set_width(g_ui.autoBtn, 120);
+    lv_obj_add_event_cb(g_ui.autoBtn, hmiUiOnAutoClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.startupOverlay = lv_obj_create(screen);
+    lv_obj_set_size(g_ui.startupOverlay, lv_pct(100), lv_pct(100));
+    lv_obj_align(g_ui.startupOverlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.startupOverlay, LV_OPA_70, 0);
+    lv_obj_set_style_bg_color(g_ui.startupOverlay, lv_color_black(), 0);
+    lv_obj_set_style_border_width(g_ui.startupOverlay, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.startupOverlay, 0, 0);
+
+    g_ui.startupPanel = lv_obj_create(g_ui.startupOverlay);
+    lv_obj_set_width(g_ui.startupPanel, lv_pct(82));
+    lv_obj_set_height(g_ui.startupPanel, LV_SIZE_CONTENT);
+    lv_obj_center(g_ui.startupPanel);
+    lv_obj_set_style_radius(g_ui.startupPanel, 14, 0);
+    lv_obj_set_style_pad_all(g_ui.startupPanel, 16, 0);
+    lv_obj_set_layout(g_ui.startupPanel, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.startupPanel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(g_ui.startupPanel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.startupPanel, 10, 0);
+
+    g_ui.startupTitle = lv_label_create(g_ui.startupPanel);
+    lv_label_set_text(g_ui.startupTitle, "Systemstart - Checkliste");
+    lv_obj_set_style_text_font(g_ui.startupTitle, &lv_font_montserrat_26, 0);
+
+    g_ui.startupText = lv_label_create(g_ui.startupPanel);
+    lv_label_set_text(g_ui.startupText, "Bitte die folgenden Punkte abarbeiten, bevor Power eingeschaltet werden kann.");
+    lv_obj_set_width(g_ui.startupText, lv_pct(100));
+    lv_label_set_long_mode(g_ui.startupText, LV_LABEL_LONG_WRAP);
+
+    g_ui.startupStatus = lv_label_create(g_ui.startupPanel);
+    lv_obj_set_width(g_ui.startupStatus, lv_pct(100));
+    lv_label_set_long_mode(g_ui.startupStatus, LV_LABEL_LONG_WRAP);
+
+    g_ui.startupM2Btn = hmiUiCreateOverlayButton(g_ui.startupPanel, "SBHF TEST");
+    lv_obj_set_width(g_ui.startupM2Btn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.startupM2Btn, hmiUiOnM2TestClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.startupM1Btn = hmiUiCreateOverlayButton(g_ui.startupPanel, "MEGA1 TEST");
+    lv_obj_set_width(g_ui.startupM1Btn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.startupM1Btn, hmiUiOnM1TestClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.startupAckBtn = hmiUiCreateOverlayButton(g_ui.startupPanel, "QUITTIEREN");
+    lv_obj_set_width(g_ui.startupAckBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.startupAckBtn, hmiUiOnStartupAckClicked, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
+
+    hmiUiUpdate();
+}
+
 static void hmiDebugExtractStatusFromJson(const char* json) {
     if (!json) {
         return;
@@ -236,8 +875,23 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         if (jsonFindBool(startup, "\"ready\"", &b)) {
             g_dbg.systemReady = b;
         }
+        if (jsonFindBool(startup, "\"checklistActive\"", &b)) {
+            g_dbg.startupChecklistActive = b;
+        }
+        if (jsonFindBool(startup, "\"m1Needs\"", &b)) {
+            g_dbg.startupM1Needs = b;
+        }
+        if (jsonFindBool(startup, "\"m2Needs\"", &b)) {
+            g_dbg.startupM2Needs = b;
+        }
+        if (jsonFindBool(startup, "\"m1SelftestRunning\"", &b)) {
+            g_dbg.startupM1SelftestRunning = b;
+        }
         if (jsonFindBool(startup, "\"m1SelftestDone\"", &b)) {
             g_dbg.startupM1SelftestDone = b;
+        }
+        if (jsonFindBool(startup, "\"m2SelftestRunning\"", &b)) {
+            g_dbg.startupM2SelftestRunning = b;
         }
         if (jsonFindBool(startup, "\"m2SelftestDone\"", &b)) {
             g_dbg.startupM2SelftestDone = b;
@@ -255,11 +909,36 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         if (jsonFindBool(actions, "\"canAuto\"", &b)) {
             g_dbg.actionCanAuto = b;
         }
+        if (jsonFindBool(actions, "\"canStartM1Selftest\"", &b)) {
+            g_dbg.actionCanStartM1Selftest = b;
+        }
+        if (jsonFindBool(actions, "\"canStartM2Selftest\"", &b)) {
+            g_dbg.actionCanStartM2Selftest = b;
+        }
+        if (jsonFindBool(actions, "\"canStartupConfirm\"", &b)) {
+            g_dbg.actionCanStartupConfirm = b;
+        }
+        if (jsonFindBool(actions, "\"canWrite\"", &b)) {
+            g_dbg.actionCanWrite = b;
+        }
     }
 
     const char* ws = strstr(json, "\"wsClients\"");
-    if (ws && jsonFindUInt32(ws, "\"base\"", &u32)) {
-        g_dbg.wsClients = u32;
+    if (ws) {
+        if (jsonFindUInt32(ws, "\"total\"", &u32)) {
+            g_dbg.wsClients = u32;
+        } else if (jsonFindUInt32(ws, "\"base\"", &u32)) {
+            g_dbg.wsClients = u32;
+        }
+    }
+
+    const char* diag = strstr(json, "\"diag\"");
+    if (diag) {
+        if (jsonFindBool(diag, "\"active\"", &b)) {
+            g_dbg.diagActive = b;
+        }
+        if (jsonFindString(diag, "\"owner\"", g_dbg.diagOwner, sizeof(g_dbg.diagOwner))) {
+        }
     }
 }
 
@@ -276,9 +955,9 @@ static void createDebugOverlay() {
     lv_obj_set_style_pad_bottom(g_debugLabel, 6, 0);
     lv_obj_set_style_radius(g_debugLabel, 6, 0);
 
-    lv_obj_align(g_debugLabel, LV_ALIGN_TOP_LEFT, 8, 8);
+    lv_obj_align(g_debugLabel, LV_ALIGN_TOP_RIGHT, -8, 8);
     lv_label_set_long_mode(g_debugLabel, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(g_debugLabel, 260);
+    lv_obj_set_width(g_debugLabel, 220);
 
     lv_label_set_text(
         g_debugLabel,
@@ -293,13 +972,12 @@ static void createDebugOverlay() {
         "heapPs: 0\n"
         "blkPs: 0\n"
         "rxOverflow: 0\n"
-        "ETH: -\n"
-        "LINK: down\n"
-        "SYS: boot\n"
-        "WS: 0\n"
-        "M1: off\n"
-        "M2: off\n"
-        "SAFE: off\n"
+        "txFrames: 0\n"
+        "txErr: 0\n"
+        "txDrop: 0\n"
+        "lastTx: -\n"
+        "CTRL: FREE\n"
+        "WRITE: LOCK\n"
         "lastMsg: boot"
     );
 }
@@ -328,13 +1006,12 @@ static void updateDebugOverlay() {
         "heapPs: %lu\n"
         "blkPs: %lu\n"
         "rxOverflow: %lu\n"
-        "ETH: %s\n"
-        "LINK: %s\n"
-        "SYS: %s\n"
-        "WS: %lu\n"
-        "M1: %s\n"
-        "M2: %s\n"
-        "SAFE: %s\n"
+        "txFrames: %lu\n"
+        "txErr: %lu\n"
+        "txDrop: %lu\n"
+        "lastTx: %s\n"
+        "CTRL: %s\n"
+        "WRITE: %s\n"
         "lastMsg: %s",
         g_dbg.uartConnected ? "connected" : "idle",
         (unsigned long)g_dbg.rxBytes,
@@ -347,13 +1024,12 @@ static void updateDebugOverlay() {
         (unsigned long)freePs,
         (unsigned long)largestPs,
         (unsigned long)g_dbg.rxOverflow,
-        g_dbg.ethIp,
-        g_dbg.ethConnected ? "OK" : "DOWN",
-        g_dbg.systemReady ? "READY" : "BOOT",
-        (unsigned long)g_dbg.wsClients,
-        g_dbg.mega1Online ? "on" : "off",
-        g_dbg.mega2Online ? "on" : "off",
-        g_dbg.safetyLock ? "LOCK" : "ok",
+        (unsigned long)g_dbg.txFrames,
+        (unsigned long)g_dbg.txErr,
+        (unsigned long)g_dbg.txDropped,
+        g_dbg.lastTx,
+        hmiUiCtrlText(),
+        hmiUiWriteText(),
         g_dbg.lastMsgType
     );
 
@@ -373,6 +1049,19 @@ static void updateDummyDebugState() {
     g_dbg.jsonOk += 2;
     g_dbg.rxOverflow += 0;
     g_dbg.uartConnected = true;
+    g_dbg.wsClients = 2;
+    g_dbg.ethConnected = true;
+    strncpy(g_dbg.ethIp, "192.168.11.71", sizeof(g_dbg.ethIp) - 1);
+    g_dbg.ethIp[sizeof(g_dbg.ethIp) - 1] = '\0';
+    g_dbg.systemReady = true;
+    g_dbg.mega1Online = true;
+    g_dbg.mega2Online = true;
+    g_dbg.diagActive = ((g_dbg.rxFrames % 6) == 0);
+    g_dbg.actionCanWrite = !g_dbg.diagActive;
+    g_dbg.actionCanAck = true;
+    g_dbg.actionCanPowerOn = true;
+    g_dbg.actionCanAuto = true;
+    hmiTxSetLast("-");
 
     if ((g_dbg.rxFrames % 10) == 0) {
         g_dbg.jsonErr += 1;
@@ -380,9 +1069,10 @@ static void updateDummyDebugState() {
     } else if ((g_dbg.rxFrames % 4) == 0) {
         hmiDebugSetLastMsg("diag");
     } else {
-        hmiDebugSetLastMsg("state");
+        hmiDebugSetLastMsg("state-lite");
     }
 }
+
 static void jsonFrameReset() {
     g_uartFramePos = 0;
     g_rxDepth = 0;
@@ -392,7 +1082,7 @@ static void jsonFrameReset() {
 }
 
 static void jsonFrameProcessChar(char c) {
-   if (!g_rxActive) {
+    if (!g_rxActive) {
         if (c == '{') {
             g_rxActive = true;
             g_rxDepth = 1;
@@ -492,14 +1182,10 @@ void setup() {
         lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), 0);
         lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, 0);
 
-        lv_obj_t* label = lv_label_create(lv_scr_act());
-        lv_label_set_text(label, "BOOT OK");
-        lv_obj_set_style_text_color(label, lv_color_white(), 0);
-        lv_obj_center(label);
-
+        createMainUi();
         createDebugOverlay();
+        hmiUiUpdate();
         updateDebugOverlay();
-
 
         lvgl_port_unlock();
     }
@@ -525,6 +1211,7 @@ void loop() {
         g_lastDebugOverlayUpdateMs = now;
 
         if (lvgl_port_lock(-1)) {
+            hmiUiUpdate();
             updateDebugOverlay();
             lvgl_port_unlock();
         }
