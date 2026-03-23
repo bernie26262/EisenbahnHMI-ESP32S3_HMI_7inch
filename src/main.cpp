@@ -7,13 +7,21 @@
 
 #define HMI_DEBUG_DUMMY 0
 
-#define UART_FRAME_BUF_SIZE 8192
+#define UART_FRAME_BUF_SIZE 4096
+#define HMI_SYNC_1 0xA5
+#define HMI_SYNC_2 0x5A
+#define HMI_RX_TIMEOUT_MS 1000
+
+enum HmiRxState : uint8_t { RX_WAIT_SYNC1 = 0, RX_WAIT_SYNC2, RX_WAIT_LEN1, RX_WAIT_LEN2, RX_READ_PAYLOAD };
 
 struct HmiDebugState {
     uint32_t rxBytes = 0;
     uint32_t rxFrames = 0;
     uint32_t jsonOk = 0;
     uint32_t jsonErr = 0;
+    uint32_t rxTimeouts = 0;
+    uint32_t rxLenErr = 0;
+    uint32_t rxBadFrames = 0;
     uint32_t rxOverflow = 0;
     bool uartConnected = false;
     char ethIp[16] = "-";
@@ -84,10 +92,10 @@ static uint32_t g_lastDebugOverlayUpdateMs = 0;
 static char* g_uartFrameBuf = nullptr;
 static size_t g_uartFramePos = 0;
 static uint32_t g_lastRxMs = 0;
-static uint32_t g_rxDepth = 0;
-static bool g_rxInString = false;
 static bool g_startupSessionActive = false;
-static bool g_rxEscape = false;
+static uint32_t g_lastFrameByteMs = 0;
+static HmiRxState g_rxState = RX_WAIT_SYNC1;
+static uint16_t g_rxExpectedLen = 0;
 
 static void hmiUiUpdate();
 static void updateDebugOverlay();
@@ -97,8 +105,11 @@ static void hmiUiOnM2TestClicked(lv_event_t* e);
 static void hmiUiOnStartupAckClicked(lv_event_t* e);
 static void hmiUiOnPowerClicked(lv_event_t* e);
 static void hmiUiOnAutoClicked(lv_event_t* e);
+static void frameParserReset();
+static void frameParserCommitPayload();
+static void frameParserCheckTimeout(uint32_t nowMs);
+static void frameParserProcessByte(uint8_t b);
 
-static bool g_rxActive = false;
 static uint32_t g_lastDummyTickMs = 0;
 
 static void hmiDebugSetLastMsg(const char* msg) {
@@ -1000,6 +1011,9 @@ static void updateDebugOverlay() {
         "rxFrames: %lu\n"
         "jsonOk: %lu\n"
         "jsonErr: %lu\n"
+        "rxTout: %lu\n"
+        "rxLen: %lu\n"
+        "rxBad: %lu\n"
         "uptime_s: %lu\n"
         "heapInt: %lu\n"
         "blkInt: %lu\n"
@@ -1018,6 +1032,9 @@ static void updateDebugOverlay() {
         (unsigned long)g_dbg.rxFrames,
         (unsigned long)g_dbg.jsonOk,
         (unsigned long)g_dbg.jsonErr,
+        (unsigned long)g_dbg.rxTimeouts,
+        (unsigned long)g_dbg.rxLenErr,
+        (unsigned long)g_dbg.rxBadFrames,
         (unsigned long)uptimeS,
         (unsigned long)freeInt,
         (unsigned long)largestInt,
@@ -1073,66 +1090,114 @@ static void updateDummyDebugState() {
     }
 }
 
-static void jsonFrameReset() {
+static void frameParserReset() {
     g_uartFramePos = 0;
-    g_rxDepth = 0;
-    g_rxInString = false;
-    g_rxEscape = false;
-    g_rxActive = false;
+    g_rxExpectedLen = 0;
+    g_rxState = RX_WAIT_SYNC1;
 }
 
-static void jsonFrameProcessChar(char c) {
-    if (!g_rxActive) {
-        if (c == '{') {
-            g_rxActive = true;
-            g_rxDepth = 1;
+static void frameParserCommitPayload() {
+    if (!g_uartFrameBuf) {
+        frameParserReset();
+        return;
+    }
+
+    g_uartFrameBuf[g_uartFramePos] = '\0';
+    g_dbg.rxFrames++;
+
+    // Minimaler JSON-Sanity-Check: erstes Nicht-Whitespace sollte '{' sein.
+    const char* p = g_uartFrameBuf;
+    while (*p == ' ' || *p == '\t' || *p == '\r' || *p == '\n') {
+        ++p;
+    }
+
+    if (*p != '{') {
+        g_dbg.jsonErr++;
+        g_dbg.rxBadFrames++;
+        hmiDebugSetLastMsg("badframe");
+        frameParserReset();
+        return;
+    }
+
+    hmiDebugSetMsgTypeFromJson(g_uartFrameBuf);
+    hmiDebugExtractStatusFromJson(g_uartFrameBuf);
+    g_dbg.jsonOk++;
+    frameParserReset();
+}
+
+static void frameParserCheckTimeout(uint32_t nowMs) {
+    if (g_rxState == RX_WAIT_SYNC1) {
+        return;
+    }
+
+    if ((nowMs - g_lastFrameByteMs) >= HMI_RX_TIMEOUT_MS) {
+        g_dbg.jsonErr++;
+        g_dbg.rxTimeouts++;
+        hmiDebugSetLastMsg("timeout");
+        frameParserReset();
+    }
+}
+
+static void frameParserProcessByte(uint8_t b) {
+    g_lastFrameByteMs = millis();
+
+    switch (g_rxState) {
+        case RX_WAIT_SYNC1:
+            if (b == HMI_SYNC_1) {
+                g_rxState = RX_WAIT_SYNC2;
+            }
+            break;
+
+        case RX_WAIT_SYNC2:
+            if (b == HMI_SYNC_2) {
+                g_rxState = RX_WAIT_LEN1;
+            } else if (b == HMI_SYNC_1) {
+                // möglicher Neustart direkt auf zweites Sync warten
+                g_rxState = RX_WAIT_SYNC2;
+            } else {
+                g_rxState = RX_WAIT_SYNC1;
+            }
+            break;
+
+        case RX_WAIT_LEN1:
+            g_rxExpectedLen = (uint16_t)b;
+            g_rxState = RX_WAIT_LEN2;
+            break;
+
+        case RX_WAIT_LEN2:
+            // Annahme: low byte zuerst, dann high byte.
+            // Falls ETH high-first sendet, diese Zeile tauschen.
+            g_rxExpectedLen |= ((uint16_t)b << 8);
+
+            if (g_rxExpectedLen == 0 || g_rxExpectedLen >= UART_FRAME_BUF_SIZE) {
+                g_dbg.rxOverflow++;
+                g_dbg.jsonErr++;
+                g_dbg.rxLenErr++;
+                hmiDebugSetLastMsg("lenerr");
+                frameParserReset();
+                break;
+            }
+
             g_uartFramePos = 0;
-            if (g_uartFrameBuf) g_uartFrameBuf[g_uartFramePos++] = c;
-        }
-        return;
-    }
+            g_rxState = RX_READ_PAYLOAD;
+            break;
 
-    if (g_uartFramePos < (UART_FRAME_BUF_SIZE - 1)) {
-        g_uartFrameBuf[g_uartFramePos++] = c;
-    } else {
-        g_dbg.rxOverflow++;
-        hmiDebugSetLastMsg("overflow");
-        jsonFrameReset();
-        return;
-    }
-
-    if (g_rxEscape) {
-        g_rxEscape = false;
-        return;
-    }
-
-    if (c == '\\') {
-        g_rxEscape = true;
-        return;
-    }
-
-    if (c == '"') {
-        g_rxInString = !g_rxInString;
-        return;
-    }
-
-    if (!g_rxInString) {
-        if (c == '{') {
-            g_rxDepth++;
-        } else if (c == '}') {
-            if (g_rxDepth > 0) {
-                g_rxDepth--;
+        case RX_READ_PAYLOAD:
+            if (g_uartFramePos < g_rxExpectedLen) {
+                g_uartFrameBuf[g_uartFramePos++] = (char)b;
+            } else {
+                g_dbg.rxOverflow++;
+                g_dbg.jsonErr++;
+                hmiDebugSetLastMsg("overflow");
+                frameParserReset();
+                break;
             }
 
-            if (g_rxDepth == 0) {
-                g_uartFrameBuf[g_uartFramePos] = '\0';
-                g_dbg.rxFrames++;
-                g_dbg.jsonOk++;
-                hmiDebugSetMsgTypeFromJson(g_uartFrameBuf);
-                hmiDebugExtractStatusFromJson(g_uartFrameBuf);
-                jsonFrameReset();
+            if (g_uartFramePos == g_rxExpectedLen) {
+                frameParserCommitPayload();
             }
-        }
+            break;
+          
     }
 }
 
@@ -1142,14 +1207,16 @@ static void pollUartRx() {
     }
 
     while (Serial0.available() > 0) {
-        const char c = (char)Serial0.read();
+        const uint8_t b = (uint8_t)Serial0.read();
 
         g_dbg.rxBytes++;
         g_dbg.uartConnected = true;
         g_lastRxMs = millis();
 
-        jsonFrameProcessChar(c);
+        frameParserProcessByte(b);
     }
+
+    frameParserCheckTimeout(millis());
 }
 
 void setup() {
@@ -1177,6 +1244,7 @@ void setup() {
 
     g_dbg.uartConnected = false;
     hmiDebugSetLastMsg("boot");
+    frameParserReset();
 
     if (lvgl_port_lock(-1)) {
         lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), 0);
