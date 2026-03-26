@@ -135,10 +135,24 @@ static lv_obj_t* g_debugLabelRight = nullptr;
 static lv_obj_t* g_debugToggleBtn = nullptr;
 static lv_obj_t* g_debugToggleLabel = nullptr;
 static uint32_t g_lastDebugOverlayUpdateMs = 0;
+
+static bool g_pendingStartupM1 = false;
+static bool g_pendingStartupM2 = false;
+static bool g_pendingStartupAck = false;
+
+static bool g_overlayM1VisibleEnabled = false;
+static bool g_overlayM2VisibleEnabled = false;
+static uint32_t g_overlayM1LastTrueMs = 0;
+static uint32_t g_overlayM2LastTrueMs = 0;
+
 static char* g_uartFrameBuf = nullptr;
 static bool g_debugExpanded = false;
 static uint32_t g_uiUpdateLastMs = 0;
 static uint32_t g_uiUpdateMaxMs = 0;
+static bool g_stateUiPending = false;
+static uint32_t g_stateUiPendingSinceMs = 0;
+
+static constexpr uint32_t HMI_STATE_UI_COALESCE_MS = 100;
 static bool g_uiDirty = true;
 static size_t g_uartFramePos = 0;
 static uint32_t g_lastRxMs = 0;
@@ -177,6 +191,10 @@ static void frameParserCheckTimeout(uint32_t nowMs);
 static void frameParserProcessByte(uint8_t b);
 
 static bool hmiStartupAllDone();
+static bool jsonFindString(const char* json, const char* key, char* out, size_t outSize);
+static bool hmiJsonTypeIs(const char* json, const char* typeValue);
+static bool hmiJsonIsStateLike(const char* json);
+
 static const char* rxStateToText(HmiRxState st) {
     switch (st) {
         case RX_WAIT_SYNC1:   return "IDLE";
@@ -365,9 +383,12 @@ static bool hmiSendActionCommand(const char* action) {
 
 static void hmiUiAfterTxAttempt() {
     g_uiDirty = true;
-    if (g_ui.detailLabel || g_ui.statusLabel) {
-        hmiUiUpdate();
-    }
+    
+    // Keine sofortige komplette UI-Neuzeichnung direkt im Event-Handler:
+    // das macht den Press-/Click-Eindruck träge und bügelt visuelle Zustände
+    // teilweise wieder weg. Die eigentliche UI-Aktualisierung läuft regulär
+    // über loop() / g_uiDirty.
+
     if (g_debugLabelLeft || g_debugLabelRight) {
         updateDebugOverlay();
         g_lastDebugOverlayUpdateMs = millis();
@@ -410,11 +431,25 @@ static bool hmiStartupOverlayActive() {
         g_startupSessionActive = true;
     }
 
-    // Session erst verlassen, wenn die Checklist nicht mehr aktiv ist
-    // und auch keine offenen Schritte mehr vorhanden sind.
+    // Overlay während der gesamten Startup-/Quittier-Phase "sticky" halten,
+    // damit es in Übergängen nicht kurz verschwindet und wieder auftaucht.
+    if (g_dbg.startupChecklistActive ||
+        g_dbg.startupM1Needs ||
+        g_dbg.startupM2Needs ||
+        g_dbg.startupM1SelftestRunning ||
+        g_dbg.startupM2SelftestRunning ||
+        g_dbg.safetyAckRequired) {
+        g_startupSessionActive = true;
+    }
+
+    // Session erst wirklich verlassen, wenn alles sauber abgeschlossen ist.
     if (!g_dbg.startupChecklistActive &&
         !g_dbg.startupM1Needs &&
-        !g_dbg.startupM2Needs) {
+        !g_dbg.startupM2Needs &&
+        !g_dbg.startupM1SelftestRunning &&
+        !g_dbg.startupM2SelftestRunning &&
+        !g_dbg.safetyAckRequired &&
+        g_dbg.systemReady) {
         g_startupSessionActive = false;
     }
 
@@ -424,6 +459,23 @@ static bool hmiStartupOverlayActive() {
 static bool hmiStartupAllDone() {
     return ((!g_dbg.startupM1Needs) || g_dbg.startupM1SelftestDone) &&
            ((!g_dbg.startupM2Needs) || g_dbg.startupM2SelftestDone);
+}
+
+static bool hmiJsonTypeIs(const char* json, const char* typeValue) {
+    if (!json || !typeValue) {
+        return false;
+    }
+
+    char typeBuf[24];
+    if (!jsonFindString(json, "\"type\"", typeBuf, sizeof(typeBuf))) {
+        return false;
+    }
+
+    return strcmp(typeBuf, typeValue) == 0;
+}
+
+static bool hmiJsonIsStateLike(const char* json) {
+    return hmiJsonTypeIs(json, "state") || hmiJsonTypeIs(json, "state-lite");
 }
 
 static void hmiDebugSetMsgTypeFromJson(const char* json) {
@@ -561,6 +613,11 @@ static void hmiUiOnM1TestClicked(lv_event_t* e) {
         return;
     }
 
+    // Lokal sofort nur den geklickten Button sperren.
+    // Der jeweils andere Selftest-Button soll davon unberührt bleiben.
+    g_pendingStartupM1 = true;
+    g_uiDirty = true;
+
     hmiSendActionCommand("m1SelftestStart");
     hmiUiAfterTxAttempt();
 }
@@ -573,6 +630,11 @@ static void hmiUiOnM2TestClicked(lv_event_t* e) {
         hmiUiAfterTxAttempt();
         return;
     }
+
+    // Lokal sofort nur den geklickten Button sperren.
+    // Der jeweils andere Selftest-Button soll davon unberührt bleiben.
+    g_pendingStartupM2 = true;
+    g_uiDirty = true;
 
     hmiSendActionCommand("sbhfSelftestStartup");
     hmiUiAfterTxAttempt();
@@ -593,6 +655,10 @@ static void hmiUiOnStartupAckClicked(lv_event_t* e) {
         hmiUiAfterTxAttempt();
         return;
     }
+
+    // Auch Quittieren lokal sofort sperren, bis der neue Snapshot kommt.
+    g_pendingStartupAck = true;
+    g_uiDirty = true;
 
     hmiSendStartupConfirmSequence();
     hmiUiAfterTxAttempt();
@@ -663,8 +729,26 @@ static void hmiUiOnAutoClicked(lv_event_t* e) {
 static void hmiUiSetButtonEnabled(lv_obj_t* btn, lv_obj_t* label, bool enabled, const char* text) {
     if (!btn) return;
 
+    // Text nur setzen, wenn er sich wirklich geändert hat.
     if (label) {
-        lv_label_set_text(label, text ? text : "-");
+        const char* wantText = text ? text : "-";
+        const char* haveText = lv_label_get_text(label);
+        if (!haveText || strcmp(haveText, wantText) != 0) {
+            lv_label_set_text(label, wantText);
+        }
+    }
+
+    const bool isDisabled = lv_obj_has_state(btn, LV_STATE_DISABLED);
+    if (enabled == !isDisabled) {
+        // Zustand schon korrekt. Nur sicherstellen, dass die Disabled-Optik
+        // lesbarer bleibt, falls der Button bereits disabled ist.
+        if (!enabled) {
+            lv_obj_set_style_opa(btn, LV_OPA_COVER, 0);
+            lv_obj_set_style_bg_opa(btn, LV_OPA_40, 0);
+            lv_obj_set_style_border_opa(btn, LV_OPA_80, 0);
+            lv_obj_set_style_text_opa(btn, LV_OPA_100, 0);
+        }
+        return;
     }
 
     if (enabled) {
@@ -673,16 +757,15 @@ static void hmiUiSetButtonEnabled(lv_obj_t* btn, lv_obj_t* label, bool enabled, 
         lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
         lv_obj_set_style_border_opa(btn, LV_OPA_COVER, 0);
         lv_obj_set_style_text_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
         lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
     } else {
         // Hart deaktivieren, damit visueller Zustand und tatsächliche
-        // Klickbarkeit deterministisch zusammenpassen.
+        // Klickbarkeit deterministisch zusammenpassen, aber lesbar bleiben.
         lv_obj_add_state(btn, LV_STATE_DISABLED);
         lv_obj_set_style_opa(btn, LV_OPA_COVER, 0);
-        lv_obj_set_style_bg_opa(btn, LV_OPA_30, 0);
-        lv_obj_set_style_border_opa(btn, LV_OPA_60, 0);
-        lv_obj_set_style_text_opa(btn, LV_OPA_60, 0);
+        lv_obj_set_style_bg_opa(btn, LV_OPA_40, 0);
+        lv_obj_set_style_border_opa(btn, LV_OPA_80, 0);
+        lv_obj_set_style_text_opa(btn, LV_OPA_100, 0);
         lv_obj_clear_flag(btn, LV_OBJ_FLAG_CLICKABLE);
     }
 }
@@ -699,7 +782,79 @@ static void hmiStartupOverlayUpdate() {
         return;
     }
 
+    const uint32_t now = millis();
+    static constexpr uint32_t OVERLAY_DISABLE_DEBOUNCE_MS = 450;
+
+    // Pending-Latches zurücknehmen, sobald der authoritative State sichtbar zeigt,
+    // dass die Aktion angekommen ist bzw. der Zustand weitergelaufen ist.
+    if (g_pendingStartupM1) {
+        if (g_dbg.startupM1SelftestDone) {
+            g_pendingStartupM1 = false;
+        }
+    }
+
+    if (g_pendingStartupM2) {
+        if (g_dbg.startupM2SelftestDone) {
+            g_pendingStartupM2 = false;
+        }
+    }
+
+    if (g_pendingStartupAck) {
+        if (!g_dbg.safetyAckRequired ||
+            !g_dbg.startupChecklistActive ||
+            g_dbg.systemReady) {
+            g_pendingStartupAck = false;
+        }
+    }
+
     const bool active = hmiStartupOverlayActive();
+    if (!active) {
+        g_overlayM1VisibleEnabled = false;
+        g_overlayM2VisibleEnabled = false;
+        lv_obj_add_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    // Rohzustände aus authoritative State + lokalen Pending-Latches
+    const bool rawCanM1 =
+        hmiCanSendM1TestNow() && (!g_pendingStartupM1);
+    const bool rawCanM2 =
+        hmiCanSendM2TestNow() && (!g_pendingStartupM2);
+    const bool rawCanAck =
+        hmiCanSendStartupConfirmNow() && (!g_pendingStartupAck);
+
+    // Nur wirklich eigene, stabile Gründe sofort hart deaktivieren.
+    // Kurzzeitige Zwischenzustände wie online/needs sollen nicht sofort
+    // den jeweils anderen Button grau ziehen, sondern erst über den
+    // Debounce sichtbar werden.
+    const bool hardDisableM1 =
+        g_pendingStartupM1 ||
+        g_dbg.startupM1SelftestRunning ||
+        g_dbg.startupM1SelftestDone;
+
+    const bool hardDisableM2 =
+        g_pendingStartupM2 ||
+        g_dbg.startupM2SelftestRunning ||
+        g_dbg.startupM2SelftestDone;
+
+    if (rawCanM1) {
+        g_overlayM1VisibleEnabled = true;
+        g_overlayM1LastTrueMs = now;
+    } else if (hardDisableM1) {
+        g_overlayM1VisibleEnabled = false;
+    } else if ((uint32_t)(now - g_overlayM1LastTrueMs) >= OVERLAY_DISABLE_DEBOUNCE_MS) {
+        g_overlayM1VisibleEnabled = false;
+    }
+
+    if (rawCanM2) {
+        g_overlayM2VisibleEnabled = true;
+        g_overlayM2LastTrueMs = now;
+    } else if (hardDisableM2) {
+        g_overlayM2VisibleEnabled = false;
+    } else if ((uint32_t)(now - g_overlayM2LastTrueMs) >= OVERLAY_DISABLE_DEBOUNCE_MS) {
+        g_overlayM2VisibleEnabled = false;
+    }
+
     if (active) {
         lv_obj_clear_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
     } else {
@@ -707,14 +862,23 @@ static void hmiStartupOverlayUpdate() {
         return;
     }
 
+    const bool showM1Running =
+        g_dbg.startupM1SelftestRunning || g_pendingStartupM1;
+    const bool showM2Running =
+        g_dbg.startupM2SelftestRunning || g_pendingStartupM2;
+
     char buf[384];
     snprintf(
         buf,
         sizeof(buf),
         "SBHF-Weichen Selftest (Mega2): %s\n"
         "Weichen Selftest (Mega1): %s",
-        hmiStartupStateText(g_dbg.startupM2Needs, g_dbg.startupM2SelftestDone, g_dbg.startupM2SelftestRunning),
-        hmiStartupStateText(g_dbg.startupM1Needs, g_dbg.startupM1SelftestDone, g_dbg.startupM1SelftestRunning)
+        hmiStartupStateText(
+            g_dbg.startupM2Needs || g_pendingStartupM2,
+            g_dbg.startupM2SelftestDone,
+            showM2Running
+        ),
+        hmiStartupStateText(g_dbg.startupM1Needs, g_dbg.startupM1SelftestDone, showM1Running)
     );
 
     if (g_ui.startupText) {
@@ -732,22 +896,26 @@ static void hmiStartupOverlayUpdate() {
     lv_obj_clear_flag(g_ui.startupM1Btn, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
 
+    const bool canM2 = g_overlayM2VisibleEnabled;
+    const bool canM1 = g_overlayM1VisibleEnabled;
+    const bool canAck = rawCanAck;
+
     hmiUiSetButtonEnabled(
         g_ui.startupM2Btn,
         nullptr,
-        hmiCanSendM2TestNow(),
+        canM2,
         "SBHF TEST"
     );
     hmiUiSetButtonEnabled(
         g_ui.startupM1Btn,
         nullptr,
-        hmiCanSendM1TestNow(),
+        canM1,
         "MEGA1 TEST"
     );
     hmiUiSetButtonEnabled(
         g_ui.startupAckBtn,
         nullptr,
-        hmiCanSendStartupConfirmNow(),
+        canAck,
         "QUITTIEREN"
     );
 }
@@ -1089,14 +1257,91 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         return;
     }
 
+    struct ParsedState {
+        bool mega1Online = false;
+        bool mega2Online = false;
+        bool safetyLock = false;
+        bool ethConnected = false;
+        bool systemReady = false;
+        uint32_t wsClients = 0;
+
+        bool startupM1SelftestDone = false;
+        bool startupM2SelftestDone = false;
+        bool startupM1SelftestRunning = false;
+        bool startupM2SelftestRunning = false;
+        bool startupChecklistActive = false;
+        bool startupM1Needs = false;
+        bool startupM2Needs = false;
+
+        bool safetyAckRequired = false;
+        bool safetyNotausActive = false;
+        bool safetyPowerOn = false;
+        bool mega1ModeAuto = false;
+
+        bool actionCanAck = false;
+        bool actionCanPowerOn = false;
+        bool actionCanPowerOff = false;
+        bool actionCanAuto = false;
+        bool actionCanManual = false;
+        bool actionCanStartM1Selftest = false;
+        bool actionCanStartM2Selftest = false;
+        bool actionCanStartupConfirm = false;
+        bool actionCanWrite = false;
+
+        bool diagActive = false;
+        char ethIp[16] = "-";
+        char diagOwner[16] = "-";
+    };
+
+    const bool isStateLike = hmiJsonIsStateLike(json);
+    ParsedState next;
+
+    // 🔥 WICHTIG: Immer vom aktuellen Zustand starten (Merge!)
+    next.mega1Online = g_dbg.mega1Online;
+    next.mega2Online = g_dbg.mega2Online;
+    next.safetyLock = g_dbg.safetyLock;
+    next.ethConnected = g_dbg.ethConnected;
+    next.systemReady = g_dbg.systemReady;
+    next.wsClients = g_dbg.wsClients;
+
+    next.startupM1SelftestDone = g_dbg.startupM1SelftestDone;
+    next.startupM2SelftestDone = g_dbg.startupM2SelftestDone;
+    next.startupM1SelftestRunning = g_dbg.startupM1SelftestRunning;
+    next.startupM2SelftestRunning = g_dbg.startupM2SelftestRunning;
+    next.startupChecklistActive = g_dbg.startupChecklistActive;
+    next.startupM1Needs = g_dbg.startupM1Needs;
+    next.startupM2Needs = g_dbg.startupM2Needs;
+
+    next.safetyAckRequired = g_dbg.safetyAckRequired;
+    next.safetyNotausActive = g_dbg.safetyNotausActive;
+    next.safetyPowerOn = g_dbg.safetyPowerOn;
+    next.mega1ModeAuto = g_dbg.mega1ModeAuto;
+
+    next.actionCanAck = g_dbg.actionCanAck;
+    next.actionCanPowerOn = g_dbg.actionCanPowerOn;
+    next.actionCanPowerOff = g_dbg.actionCanPowerOff;
+    next.actionCanAuto = g_dbg.actionCanAuto;
+    next.actionCanManual = g_dbg.actionCanManual;
+    next.actionCanStartM1Selftest = g_dbg.actionCanStartM1Selftest;
+    next.actionCanStartM2Selftest = g_dbg.actionCanStartM2Selftest;
+    next.actionCanStartupConfirm = g_dbg.actionCanStartupConfirm;
+    next.actionCanWrite = g_dbg.actionCanWrite;
+
+    next.diagActive = g_dbg.diagActive;
+
+    strncpy(next.ethIp, g_dbg.ethIp, sizeof(next.ethIp) - 1);
+    next.ethIp[sizeof(next.ethIp) - 1] = '\0';
+    strncpy(next.diagOwner, g_dbg.diagOwner, sizeof(next.diagOwner) - 1);
+    next.diagOwner[sizeof(next.diagOwner) - 1] = '\0';
+
     bool b = false;
     uint32_t u32 = 0;
 
     // Top-level / legacy shortcuts
-    if (jsonFindString(json, "\"ip\"", g_dbg.ethIp, sizeof(g_dbg.ethIp))) {
+    if (jsonFindString(json, "\"ip\"", next.ethIp, sizeof(next.ethIp))) {
     }
     if (jsonFindBool(json, "\"mega1Online\"", &b)) {
-        g_dbg.mega1Online = b;
+        next.mega1Online = b;
     }
 
     // Section-based merge semantics:
@@ -1104,119 +1349,155 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     const char* mega1 = strstr(json, "\"mega1\"");
     if (mega1) {
         if (jsonFindBool(mega1, "\"online\"", &b)) {
-            g_dbg.mega1Online = b;
+            next.mega1Online = b;
         }
         if (jsonFindBool(mega1, "\"modeAuto\"", &b)) {
-            g_dbg.mega1ModeAuto = b;
+            next.mega1ModeAuto = b;
         }
     }
 
     const char* mega2 = strstr(json, "\"mega2\"");
     if (mega2 && jsonFindBool(mega2, "\"online\"", &b)) {
-        g_dbg.mega2Online = b;
+        next.mega2Online = b;
     }
 
     const char* safety = strstr(json, "\"safety\"");
     if (safety) {
         if (jsonFindBool(safety, "\"lock\"", &b)) {
-            g_dbg.safetyLock = b;
+            next.safetyLock = b;
         }
         if (jsonFindBool(safety, "\"ackRequired\"", &b)) {
-            g_dbg.safetyAckRequired = b;
+            next.safetyAckRequired = b;
         }
         if (jsonFindBool(safety, "\"notausActive\"", &b)) {
-            g_dbg.safetyNotausActive = b;
+            next.safetyNotausActive = b;
         }
         if (jsonFindBool(safety, "\"powerOn\"", &b)) {
-            g_dbg.safetyPowerOn = b;
+            next.safetyPowerOn = b;
         }
     }
 
     const char* eth = strstr(json, "\"eth\"");
     if (eth) {
         if (jsonFindBool(eth, "\"connected\"", &b)) {
-            g_dbg.ethConnected = b;
+            next.ethConnected = b;
         }
-        if (jsonFindString(eth, "\"ip\"", g_dbg.ethIp, sizeof(g_dbg.ethIp))) {
+        if (jsonFindString(eth, "\"ip\"", next.ethIp, sizeof(next.ethIp))) {
         }
     }
 
     const char* startup = strstr(json, "\"startup\"");
     if (startup) {
         if (jsonFindBool(startup, "\"ready\"", &b)) {
-            g_dbg.systemReady = b;
+            next.systemReady = b;
         }
         if (jsonFindBool(startup, "\"checklistActive\"", &b)) {
-            g_dbg.startupChecklistActive = b;
+            next.startupChecklistActive = b;
         }
         if (jsonFindBool(startup, "\"m1Needs\"", &b)) {
-            g_dbg.startupM1Needs = b;
+            next.startupM1Needs = b;
         }
         if (jsonFindBool(startup, "\"m2Needs\"", &b)) {
-            g_dbg.startupM2Needs = b;
+            next.startupM2Needs = b;
         }
         if (jsonFindBool(startup, "\"m1SelftestRunning\"", &b)) {
-            g_dbg.startupM1SelftestRunning = b;
+            next.startupM1SelftestRunning = b;
         }
         if (jsonFindBool(startup, "\"m1SelftestDone\"", &b)) {
-            g_dbg.startupM1SelftestDone = b;
+            next.startupM1SelftestDone = b;
         }
         if (jsonFindBool(startup, "\"m2SelftestRunning\"", &b)) {
-            g_dbg.startupM2SelftestRunning = b;
+            next.startupM2SelftestRunning = b;
         }
         if (jsonFindBool(startup, "\"m2SelftestDone\"", &b)) {
-            g_dbg.startupM2SelftestDone = b;
+            next.startupM2SelftestDone = b;
         }
     }
 
     const char* actions = strstr(json, "\"actions\"");
     if (actions) {
         if (jsonFindBool(actions, "\"canAck\"", &b)) {
-            g_dbg.actionCanAck = b;
+            next.actionCanAck = b;
         }
         if (jsonFindBool(actions, "\"canPowerOn\"", &b)) {
-            g_dbg.actionCanPowerOn = b;
+            next.actionCanPowerOn = b;
         }
         if (jsonFindBool(actions, "\"canPowerOff\"", &b)) {
-            g_dbg.actionCanPowerOff = b;
+            next.actionCanPowerOff = b;
         }
         if (jsonFindBool(actions, "\"canAuto\"", &b)) {
-            g_dbg.actionCanAuto = b;
+            next.actionCanAuto = b;
         }
         if (jsonFindBool(actions, "\"canManual\"", &b)) {
-            g_dbg.actionCanManual = b;
+            next.actionCanManual = b;
         }
         if (jsonFindBool(actions, "\"canStartM1Selftest\"", &b)) {
-            g_dbg.actionCanStartM1Selftest = b;
+            next.actionCanStartM1Selftest = b;
         }
         if (jsonFindBool(actions, "\"canStartM2Selftest\"", &b)) {
-            g_dbg.actionCanStartM2Selftest = b;
+            next.actionCanStartM2Selftest = b;
         }
         if (jsonFindBool(actions, "\"canStartupConfirm\"", &b)) {
-            g_dbg.actionCanStartupConfirm = b;
+            next.actionCanStartupConfirm = b;
         }
         if (jsonFindBool(actions, "\"canWrite\"", &b)) {
-            g_dbg.actionCanWrite = b;
+            next.actionCanWrite = b;
         }
     }
 
     const char* ws = strstr(json, "\"wsClients\"");
     if (ws) {
         if (jsonFindUInt32(ws, "\"total\"", &u32)) {
-            g_dbg.wsClients = u32;
+            next.wsClients = u32;
         } else if (jsonFindUInt32(ws, "\"base\"", &u32)) {
-            g_dbg.wsClients = u32;
+            next.wsClients = u32;
         }
     }
 
     const char* diag = strstr(json, "\"diag\"");
     if (diag) {
         if (jsonFindBool(diag, "\"active\"", &b)) {
-            g_dbg.diagActive = b;
+            next.diagActive = b;
         }
-        if (jsonFindString(diag, "\"owner\"", g_dbg.diagOwner, sizeof(g_dbg.diagOwner))) {
+        if (jsonFindString(diag, "\"owner\"", next.diagOwner, sizeof(next.diagOwner))) {
         }
     }
+
+    g_dbg.mega1Online = next.mega1Online;
+    g_dbg.mega2Online = next.mega2Online;
+    g_dbg.safetyLock = next.safetyLock;
+    g_dbg.ethConnected = next.ethConnected;
+    g_dbg.systemReady = next.systemReady;
+    g_dbg.wsClients = next.wsClients;
+
+    g_dbg.startupM1SelftestDone = next.startupM1SelftestDone;
+    g_dbg.startupM2SelftestDone = next.startupM2SelftestDone;
+    g_dbg.startupM1SelftestRunning = next.startupM1SelftestRunning;
+    g_dbg.startupM2SelftestRunning = next.startupM2SelftestRunning;
+    g_dbg.startupChecklistActive = next.startupChecklistActive;
+    g_dbg.startupM1Needs = next.startupM1Needs;
+    g_dbg.startupM2Needs = next.startupM2Needs;
+
+    g_dbg.safetyAckRequired = next.safetyAckRequired;
+    g_dbg.safetyNotausActive = next.safetyNotausActive;
+    g_dbg.safetyPowerOn = next.safetyPowerOn;
+    g_dbg.mega1ModeAuto = next.mega1ModeAuto;
+
+    g_dbg.actionCanAck = next.actionCanAck;
+    g_dbg.actionCanPowerOn = next.actionCanPowerOn;
+    g_dbg.actionCanPowerOff = next.actionCanPowerOff;
+    g_dbg.actionCanAuto = next.actionCanAuto;
+    g_dbg.actionCanManual = next.actionCanManual;
+    g_dbg.actionCanStartM1Selftest = next.actionCanStartM1Selftest;
+    g_dbg.actionCanStartM2Selftest = next.actionCanStartM2Selftest;
+    g_dbg.actionCanStartupConfirm = next.actionCanStartupConfirm;
+    g_dbg.actionCanWrite = next.actionCanWrite;
+
+    g_dbg.diagActive = next.diagActive;
+    strncpy(g_dbg.ethIp, next.ethIp, sizeof(g_dbg.ethIp) - 1);
+    g_dbg.ethIp[sizeof(g_dbg.ethIp) - 1] = '\0';
+    strncpy(g_dbg.diagOwner, next.diagOwner, sizeof(g_dbg.diagOwner) - 1);
+    g_dbg.diagOwner[sizeof(g_dbg.diagOwner) - 1] = '\0';
 }
 
 static void hmiOnDebugToggle(lv_event_t* e) {
@@ -1459,8 +1740,15 @@ static void frameParserCommitPayload() {
 
     hmiDebugSetMsgTypeFromJson(g_uartFrameBuf);
     hmiDebugExtractStatusFromJson(g_uartFrameBuf);
+
     g_dbg.lastOkLen = (uint16_t)g_uartFramePos;
-    g_uiDirty = true;
+
+    // ❗ HIER Änderung:
+    if (!g_stateUiPending) {
+        g_stateUiPendingSinceMs = millis();
+    }
+    g_stateUiPending = true;
+
     g_dbg.jsonOk++;
     frameParserReset();
 }
@@ -1648,28 +1936,40 @@ void loop() {
 
     const uint32_t now = millis();
     const bool overlayDue = (now - g_lastDebugOverlayUpdateMs >= 200);
+
+    if (g_stateUiPending &&
+        ((uint32_t)(now - g_stateUiPendingSinceMs) >= HMI_STATE_UI_COALESCE_MS)) {
+        g_uiDirty = true;
+        g_stateUiPending = false;
+    }
+
     const bool uiDue = g_uiDirty;
     if (overlayDue || uiDue) {
-        g_lastDebugOverlayUpdateMs = now;
-
         // Vor dem UI-Update noch einmal UART leeren.
         pollUartRx();
 
-
         if (lvgl_port_lock(-1)) {
-            const uint32_t uiStartMs = millis();
-            hmiUiUpdate();
+            if (uiDue) {
+                const uint32_t uiStartMs = millis();
+                hmiUiUpdate();
+                g_uiDirty = false;
+
+                const uint32_t uiElapsedMs = millis() - uiStartMs;
+                g_uiUpdateLastMs = uiElapsedMs;
+                if (uiElapsedMs > g_uiUpdateMaxMs) {
+                    g_uiUpdateMaxMs = uiElapsedMs;
+                }
+            }
+
             if (overlayDue || uiDue) {
                 updateDebugOverlay();
             }
-            lvgl_port_unlock();
-            g_uiDirty = false;
 
-            const uint32_t uiElapsedMs = millis() - uiStartMs;
-            g_uiUpdateLastMs = uiElapsedMs;
-            if (uiElapsedMs > g_uiUpdateMaxMs) {
-                g_uiUpdateMaxMs = uiElapsedMs;
-            }
+            lvgl_port_unlock();
+        }
+
+        if (overlayDue) {
+            g_lastDebugOverlayUpdateMs = now;
         }
 
         // Direkt nach dem UI-Update erneut abholen, falls während LVGL neue Bytes ankamen.
