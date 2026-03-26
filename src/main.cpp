@@ -69,7 +69,9 @@ struct HmiDebugState {
     bool mega1ModeAuto = false;
     bool actionCanAck = false;
     bool actionCanPowerOn = false;
+    bool actionCanPowerOff = false;
     bool actionCanAuto = false;
+    bool actionCanManual = false;
     bool actionCanStartM1Selftest = false;
     bool actionCanStartM2Selftest = false;
     bool actionCanStartupConfirm = false;
@@ -86,15 +88,34 @@ struct HmiUi {
     lv_obj_t* root = nullptr;
     lv_obj_t* statusLabel = nullptr;
     lv_obj_t* detailLabel = nullptr;
+    
+    lv_obj_t* pillRowTop = nullptr;
+    lv_obj_t* pillRowBottom = nullptr;
+    lv_obj_t* pillSystem = nullptr;
+    lv_obj_t* pillSystemLabel = nullptr;
+    lv_obj_t* pillEth = nullptr;
+    lv_obj_t* pillEthLabel = nullptr;
+    lv_obj_t* pillWs = nullptr;
+    lv_obj_t* pillWsLabel = nullptr;
+    lv_obj_t* pillMega1 = nullptr;
+    lv_obj_t* pillMega1Label = nullptr;
+    lv_obj_t* pillMega2 = nullptr;
+    lv_obj_t* pillMega2Label = nullptr;
+    lv_obj_t* pillMode = nullptr;
+    lv_obj_t* pillModeLabel = nullptr;
+    lv_obj_t* pillPower = nullptr;
+    lv_obj_t* pillPowerLabel = nullptr;
     lv_obj_t* m1TestBtn = nullptr;
     lv_obj_t* m2TestBtn = nullptr;
     lv_obj_t* m1TestBtnLabel = nullptr;
     lv_obj_t* m2TestBtnLabel = nullptr;
     lv_obj_t* ackBtn = nullptr;
     lv_obj_t* powerBtn = nullptr;
+    lv_obj_t* powerOffBtn = nullptr;
     lv_obj_t* autoBtn = nullptr;
     lv_obj_t* ackBtnLabel = nullptr;
     lv_obj_t* powerBtnLabel = nullptr;
+    lv_obj_t* powerOffBtnLabel = nullptr;
     lv_obj_t* autoBtnLabel = nullptr;
 
     lv_obj_t* startupOverlay = nullptr;
@@ -111,8 +132,13 @@ static HmiDebugState g_dbg;
 static HmiUi g_ui;
 static lv_obj_t* g_debugLabelLeft = nullptr;
 static lv_obj_t* g_debugLabelRight = nullptr;
+static lv_obj_t* g_debugToggleBtn = nullptr;
+static lv_obj_t* g_debugToggleLabel = nullptr;
 static uint32_t g_lastDebugOverlayUpdateMs = 0;
 static char* g_uartFrameBuf = nullptr;
+static bool g_debugExpanded = false;
+static uint32_t g_uiUpdateLastMs = 0;
+static uint32_t g_uiUpdateMaxMs = 0;
 static bool g_uiDirty = true;
 static size_t g_uartFramePos = 0;
 static uint32_t g_lastRxMs = 0;
@@ -123,11 +149,27 @@ static uint16_t g_rxExpectedLen = 0;
 
 static void hmiUiUpdate();
 static void updateDebugOverlay();
+static void hmiUiSetPill(lv_obj_t* pill, lv_obj_t* label, const char* text, lv_color_t bg);
+static void hmiUiSetActionButtonColor(lv_obj_t* btn, lv_color_t bg);
+static void hmiUiBuildStatusTexts(
+    char* systemBuf, size_t systemBufSize,
+    char* ethBuf, size_t ethBufSize,
+    char* wsBuf, size_t wsBufSize,
+    char* m1Buf, size_t m1BufSize,
+    char* m2Buf, size_t m2BufSize,
+    char* modeBuf, size_t modeBufSize,
+    char* powerBuf, size_t powerBufSize,
+    bool* outSystemWarn,
+    bool* outM1Warn,
+    bool* outM2Warn
+);
+static void hmiOnDebugToggle(lv_event_t* e);
 static void hmiUiOnAckClicked(lv_event_t* e);
 static void hmiUiOnM1TestClicked(lv_event_t* e);
 static void hmiUiOnM2TestClicked(lv_event_t* e);
 static void hmiUiOnStartupAckClicked(lv_event_t* e);
 static void hmiUiOnPowerClicked(lv_event_t* e);
+static void hmiUiOnPowerOffClicked(lv_event_t* e);
 static void hmiUiOnAutoClicked(lv_event_t* e);
 static void frameParserReset();
 static void frameParserCommitPayload();
@@ -243,6 +285,17 @@ static bool hmiCanSendPowerNow() {
            (!g_dbg.safetyLock);
 }
 
+static bool hmiCanSendPowerOffNow() {
+    if (g_dbg.actionCanPowerOff) {
+        return true;
+    }
+    return hmiCanWriteNow() &&
+           g_dbg.ethConnected &&
+           g_dbg.mega1Online &&
+           g_dbg.mega2Online &&
+           g_dbg.safetyPowerOn;
+}
+
 static bool hmiCanSendAutoNow() {
     if (g_dbg.actionCanAuto) {
         return true;
@@ -257,7 +310,19 @@ static bool hmiCanSendAutoNow() {
            (!g_dbg.mega1ModeAuto);
 }
 
-
+static bool hmiCanSendManualNow() {
+    if (g_dbg.actionCanManual) {
+        return true;
+    }
+    return hmiCanWriteNow() &&
+           g_dbg.ethConnected &&
+           g_dbg.mega1Online &&
+           g_dbg.mega2Online &&
+           g_dbg.systemReady &&
+           (!g_dbg.safetyLock) &&
+           (!g_dbg.safetyNotausActive) &&
+           g_dbg.mega1ModeAuto;
+}
 
 static bool hmiSendActionCommand(const char* action) {
     if (!action || !*action) {
@@ -298,37 +363,6 @@ static bool hmiSendActionCommand(const char* action) {
     return true;
 }
 
-static bool hmiSendSetModeCommand(uint8_t mode) {
-    char line[96];
-    const int len = snprintf(
-        line,
-        sizeof(line),
-        "{\"type\":\"action\",\"action\":\"m1SetMode\",\"mode\":%u}",
-        (unsigned)mode
-    );
-
-    if (len <= 0 || (size_t)len >= sizeof(line)) {
-        g_dbg.txErr++;
-        hmiTxSetLast("fmt-mode");
-        return false;
-    }
-
-    size_t written = 0;
-    written += Serial0.write((const uint8_t*)line, (size_t)len);
-    written += Serial0.write((uint8_t)'\n');
-    Serial0.flush();
-
-    if (written != (size_t)len + 1U) {
-        g_dbg.txErr++;
-        hmiTxSetLast("uart-mode");
-        return false;
-    }
-
-    g_dbg.txFrames++;
-    hmiTxSetLast(mode == 1 ? "m1SetMode:auto" : "m1SetMode:manual");
-    return true;
-}
-
 static void hmiUiAfterTxAttempt() {
     g_uiDirty = true;
     if (g_ui.detailLabel || g_ui.statusLabel) {
@@ -346,7 +380,7 @@ static bool hmiSendStartupConfirmSequence() {
 
     // Wie WebUI: sicherheitshalber vor der finalen Quittierung AUTO anfordern.
     if (g_dbg.mega1Online) {
-        ok = hmiSendSetModeCommand(1) && ok;
+        ok = hmiSendActionCommand("setAuto") && ok;
     }
 
     if (g_dbg.startupM1Needs) {
@@ -591,16 +625,38 @@ static void hmiUiOnPowerClicked(lv_event_t* e) {
     hmiUiAfterTxAttempt();
 }
 
-static void hmiUiOnAutoClicked(lv_event_t* e) {
+static void hmiUiOnPowerOffClicked(lv_event_t* e) {
     (void)e;
-    if (!hmiCanSendAutoNow()) {
+    if (!hmiCanSendPowerOffNow()) {
         g_dbg.txDropped++;
-        hmiTxSetLast("drop-auto");
+        hmiTxSetLast("drop-poweroff");
         hmiUiAfterTxAttempt();
         return;
     }
 
-    hmiSendSetModeCommand(1);
+    hmiSendActionCommand("powerOff");
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnAutoClicked(lv_event_t* e) {
+    (void)e;
+    if (g_dbg.mega1ModeAuto) {
+        if (!hmiCanSendManualNow()) {
+            g_dbg.txDropped++;
+            hmiTxSetLast("drop-manual");
+            hmiUiAfterTxAttempt();
+            return;
+        }
+        hmiSendActionCommand("setManual");
+    } else {
+        if (!hmiCanSendAutoNow()) {
+            g_dbg.txDropped++;
+            hmiTxSetLast("drop-auto");
+            hmiUiAfterTxAttempt();
+            return;
+        }
+        hmiSendActionCommand("setAuto");
+    }
     hmiUiAfterTxAttempt();
 }
 
@@ -634,7 +690,7 @@ static void hmiUiSetButtonEnabled(lv_obj_t* btn, lv_obj_t* label, bool enabled, 
 static const char* hmiStartupStateText(bool needs, bool done, bool running) {
     if (!needs) return "nicht erforderlich";
     if (done) return "erledigt";
-    if (running) return "läuft...";
+    if (running) return "laeuft...";
     return "offen";
 }
 
@@ -671,103 +727,107 @@ static void hmiStartupOverlayUpdate() {
     }
     lv_label_set_text(g_ui.startupStatus, buf);
 
-    // Overlay-Buttons haben kein separates Label-Handle, daher label=nullptr zulassen.
-    hmiUiSetButtonEnabled(g_ui.startupM2Btn, nullptr, hmiCanSendM2TestNow(), "SBHF TEST");
-    hmiUiSetButtonEnabled(g_ui.startupM1Btn, nullptr, hmiCanSendM1TestNow(), "MEGA1 TEST");
+    // Overlay-Buttons immer sichtbar halten, nur enabled/disabled umschalten.
+    lv_obj_clear_flag(g_ui.startupM2Btn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(g_ui.startupM1Btn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
 
-    if (hmiStartupAllDone()) {
-        lv_obj_clear_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
-        hmiUiSetButtonEnabled(g_ui.startupAckBtn, nullptr, hmiCanSendStartupConfirmNow(), "QUITTIEREN");
-    } else {
-        lv_obj_add_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
-    }
+    hmiUiSetButtonEnabled(
+        g_ui.startupM2Btn,
+        nullptr,
+        hmiCanSendM2TestNow(),
+        "SBHF TEST"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.startupM1Btn,
+        nullptr,
+        hmiCanSendM1TestNow(),
+        "MEGA1 TEST"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.startupAckBtn,
+        nullptr,
+        hmiCanSendStartupConfirmNow(),
+        "QUITTIEREN"
+    );
 }
 
 static void hmiUiUpdate() {
-    if (!g_ui.statusLabel || !g_ui.detailLabel) {
+    if (!g_ui.powerBtn || !g_ui.powerOffBtn || !g_ui.autoBtn) {
         return;
     }
 
     const bool canM1Test = hmiCanSendM1TestNow();
     const bool canM2Test = hmiCanSendM2TestNow();
-    const bool canAck = hmiCanSendAckNow();
-    const bool canPower = hmiCanSendPowerNow();
+    const bool canPowerOn = hmiCanSendPowerNow();
+    const bool canPowerOff = hmiCanSendPowerOffNow();
     const bool canAuto = hmiCanSendAutoNow();
+    const bool canManual = hmiCanSendManualNow();
+    const bool autoIsEnabled = g_dbg.mega1ModeAuto ? canManual : canAuto;
 
-    char statusBuf[256];
-    snprintf(
-        statusBuf,
-        sizeof(statusBuf),
-        "ETH: %s   IP: %s\n"
-        "M1: %s   M2: %s   SYS: %s\n"
-        "WS: %lu   CTRL: %s   WRITE: %s",
-        g_dbg.ethConnected ? "OK" : "DOWN",
-        g_dbg.ethIp,
-        g_dbg.mega1Online ? (g_dbg.mega1ModeAuto ? "AUTO" : "ON") : "OFF",
-        g_dbg.mega2Online ? "ON" : "OFF",
-        g_dbg.systemReady ? "READY" : "BOOT",
-        (unsigned long)g_dbg.wsClients,
-        hmiUiCtrlText(),
-        hmiUiWriteText()
-    );
-    lv_label_set_text(g_ui.statusLabel, statusBuf);
+    char systemBuf[64];
+    char ethBuf[96];
+    char wsBuf[32];
+    char m1Buf[48];
+    char m2Buf[48];
+    char modeBuf[32];
+    char powerBuf[32];
+    bool systemWarn = false;
+    bool m1Warn = false;
+    bool m2Warn = false;
 
-    char detailBuf[256];
-    snprintf(
-        detailBuf,
-        sizeof(detailBuf),
-        "SAFE: %s   ACK: %s   PWR: %s\n"
-        "M1-ST: %s   M2-ST: %s   NA: %s\n"
-        "canM1:%s canM2:%s canAck:%s canPwr:%s canAuto:%s\n"
-        "diagOwner: %s   lastMsg: %s   lastTx: %s",
-        g_dbg.safetyLock ? "LOCK" : "OK",
-        g_dbg.safetyAckRequired ? "REQ" : "-",
-        g_dbg.safetyPowerOn ? "ON" : "OFF",
-        hmiSelftestText(g_dbg.startupM1SelftestDone, g_dbg.startupM1SelftestRunning),
-        hmiSelftestText(g_dbg.startupM2SelftestDone, g_dbg.startupM2SelftestRunning),
-        g_dbg.safetyNotausActive ? "ON" : "OFF",
-        canM1Test ? "1" : "0",
-        canM2Test ? "1" : "0",
-        canAck ? "1" : "0",
-        canPower ? "1" : "0",
-        canAuto ? "1" : "0",
-        g_dbg.diagOwner,
-        g_dbg.lastMsgType,
-        g_dbg.lastTx
-    );
-    lv_label_set_text(g_ui.detailLabel, detailBuf);
-
-    hmiUiSetButtonEnabled(
-        g_ui.m1TestBtn,
-        g_ui.m1TestBtnLabel,
-        canM1Test,
-        "M1 TEST"
-    );
-    hmiUiSetButtonEnabled(
-        g_ui.m2TestBtn,
-        g_ui.m2TestBtnLabel,
-        canM2Test,
-        "M2 TEST"
+    hmiUiBuildStatusTexts(
+        systemBuf, sizeof(systemBuf),
+        ethBuf, sizeof(ethBuf),
+        wsBuf, sizeof(wsBuf),
+        m1Buf, sizeof(m1Buf),
+        m2Buf, sizeof(m2Buf),
+        modeBuf, sizeof(modeBuf),
+        powerBuf, sizeof(powerBuf),
+        &systemWarn, &m1Warn, &m2Warn
     );
 
-    hmiUiSetButtonEnabled(
-        g_ui.ackBtn,
-        g_ui.ackBtnLabel,
-        canAck,
-        "ACK"
-    );
+    hmiUiSetPill(g_ui.pillSystem, g_ui.pillSystemLabel, systemBuf,
+                 systemWarn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN));
+    hmiUiSetPill(g_ui.pillEth, g_ui.pillEthLabel, ethBuf,
+                 g_dbg.ethConnected ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED));
+    hmiUiSetPill(g_ui.pillWs, g_ui.pillWsLabel, wsBuf,
+                 (g_dbg.wsClients > 0) ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED));
+    hmiUiSetPill(g_ui.pillMega1, g_ui.pillMega1Label, m1Buf,
+                 !g_dbg.mega1Online ? lv_palette_main(LV_PALETTE_RED)
+                                    : (m1Warn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN)));
+    hmiUiSetPill(g_ui.pillMega2, g_ui.pillMega2Label, m2Buf,
+                 !g_dbg.mega2Online ? lv_palette_main(LV_PALETTE_RED)
+                                    : (m2Warn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN)));
+    hmiUiSetPill(g_ui.pillMode, g_ui.pillModeLabel, modeBuf,
+                 g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_BLUE));
+    hmiUiSetPill(g_ui.pillPower, g_ui.pillPowerLabel, powerBuf,
+                 g_dbg.safetyPowerOn ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_darken(LV_PALETTE_GREY, 2));
+
     hmiUiSetButtonEnabled(
         g_ui.powerBtn,
         g_ui.powerBtnLabel,
-        canPower,
-        g_dbg.safetyPowerOn ? "POWER ON" : "POWER"
+        canPowerOn,
+        "POWER ON"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.powerOffBtn,
+        g_ui.powerOffBtnLabel,
+        canPowerOff,
+        "STOP / POWER OFF"
     );
     hmiUiSetButtonEnabled(
         g_ui.autoBtn,
         g_ui.autoBtnLabel,
-        canAuto,
-        g_dbg.mega1ModeAuto ? "AUTO ON" : "AUTO"
+        autoIsEnabled,
+        g_dbg.mega1ModeAuto ? "MANUELL" : "AUTO"
     );
+
+    hmiUiSetActionButtonColor(g_ui.powerBtn, lv_palette_main(LV_PALETTE_GREEN));
+    hmiUiSetActionButtonColor(g_ui.powerOffBtn, lv_palette_main(LV_PALETTE_RED));
+    hmiUiSetActionButtonColor(g_ui.autoBtn,
+        g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_BLUE)
+                            : lv_palette_main(LV_PALETTE_GREEN));
 
     hmiStartupOverlayUpdate();
 }
@@ -798,6 +858,85 @@ static lv_obj_t* hmiUiCreateOverlayButton(lv_obj_t* parent, const char* text) {
     return btn;
 }
 
+static lv_obj_t* hmiUiCreateInfoPill(lv_obj_t* parent, lv_obj_t** outLabel, const char* text) {
+    lv_obj_t* pill = lv_btn_create(parent);
+    lv_obj_set_height(pill, 42);
+    lv_obj_set_style_radius(pill, 21, 0);
+    lv_obj_set_style_pad_left(pill, 14, 0);
+    lv_obj_set_style_pad_right(pill, 14, 0);
+    lv_obj_set_style_pad_top(pill, 6, 0);
+    lv_obj_set_style_pad_bottom(pill, 6, 0);
+    lv_obj_clear_flag(pill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_flag(pill, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_clear_flag(pill, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* label = lv_label_create(pill);
+    lv_label_set_text(label, text ? text : "-");
+    lv_obj_center(label);
+
+    if (outLabel) {
+        *outLabel = label;
+    }
+    return pill;
+}
+
+static void hmiUiSetPill(lv_obj_t* pill, lv_obj_t* label, const char* text, lv_color_t bg) {
+    if (!pill) return;
+    if (label) {
+        lv_label_set_text(label, text ? text : "-");
+    }
+
+    lv_obj_set_style_bg_color(pill, bg, 0);
+    lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(pill, 0, 0);
+    lv_obj_set_style_text_color(pill, lv_color_white(), 0);
+}
+
+static void hmiUiSetActionButtonColor(lv_obj_t* btn, lv_color_t bg) {
+    if (!btn) return;
+    lv_obj_set_style_bg_color(btn, bg, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_text_color(btn, lv_color_white(), 0);
+}
+
+static void hmiUiBuildStatusTexts(
+    char* systemBuf, size_t systemBufSize,
+    char* ethBuf, size_t ethBufSize,
+    char* wsBuf, size_t wsBufSize,
+    char* m1Buf, size_t m1BufSize,
+    char* m2Buf, size_t m2BufSize,
+    char* modeBuf, size_t modeBufSize,
+    char* powerBuf, size_t powerBufSize,
+    bool* outSystemWarn,
+    bool* outM1Warn,
+    bool* outM2Warn
+) {
+    const bool m1Warn = g_dbg.mega1Online && g_dbg.startupM1Needs && (!g_dbg.startupM1SelftestDone);
+    const bool m2Warn = g_dbg.mega2Online && g_dbg.startupM2Needs && (!g_dbg.startupM2SelftestDone);
+    const bool systemWarn =
+        g_dbg.safetyLock ||
+        g_dbg.safetyAckRequired ||
+        g_dbg.safetyNotausActive ||
+        (!g_dbg.ethConnected) ||
+        (!g_dbg.mega1Online) ||
+        (!g_dbg.mega2Online) ||
+        m1Warn ||
+        m2Warn;
+
+    snprintf(systemBuf, systemBufSize, "System: %s", systemWarn ? "Warning" : "OK");
+    snprintf(ethBuf, ethBufSize, "ETH: %s  IP: %s", g_dbg.ethConnected ? "OK" : "Getrennt", g_dbg.ethIp);
+    snprintf(wsBuf, wsBufSize, "WS: %s", (g_dbg.wsClients > 0) ? "Verbunden" : "Getrennt");
+    snprintf(m1Buf, m1BufSize, "Mega1: %s", !g_dbg.mega1Online ? "Offline" : (m1Warn ? "Online, Warn" : "Online"));
+    snprintf(m2Buf, m2BufSize, "Mega2: %s", !g_dbg.mega2Online ? "Offline" : (m2Warn ? "Online, Warn" : "Online"));
+    snprintf(modeBuf, modeBufSize, "Modus: %s", g_dbg.mega1ModeAuto ? "Auto" : "Manuell");
+    snprintf(powerBuf, powerBufSize, "Power: %s", g_dbg.safetyPowerOn ? "AN" : "AUS");
+
+    if (outSystemWarn) *outSystemWarn = systemWarn;
+    if (outM1Warn) *outM1Warn = m1Warn;
+    if (outM2Warn) *outM2Warn = m2Warn;
+}
+
 static void createMainUi() {
     lv_obj_t* screen = lv_scr_act();
 
@@ -816,11 +955,51 @@ static void createMainUi() {
     lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
     lv_obj_set_style_text_color(title, lv_color_white(), 0);
 
+    g_ui.pillRowTop = lv_obj_create(g_ui.root);
+    lv_obj_set_width(g_ui.pillRowTop, lv_pct(100));
+    lv_obj_set_height(g_ui.pillRowTop, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(g_ui.pillRowTop, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.pillRowTop, 0, 0);
+    lv_obj_set_style_pad_left(g_ui.pillRowTop, 0, 0);
+    lv_obj_set_style_pad_right(g_ui.pillRowTop, 0, 0);
+    lv_obj_set_style_pad_top(g_ui.pillRowTop, 8, 0);
+    lv_obj_set_style_pad_bottom(g_ui.pillRowTop, 0, 0);
+    lv_obj_set_layout(g_ui.pillRowTop, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.pillRowTop, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(g_ui.pillRowTop, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.pillRowTop, 8, 0);
+    lv_obj_set_style_pad_column(g_ui.pillRowTop, 10, 0);
+
+    g_ui.pillSystem = hmiUiCreateInfoPill(g_ui.pillRowTop, &g_ui.pillSystemLabel, "System: -");
+    g_ui.pillEth    = hmiUiCreateInfoPill(g_ui.pillRowTop, &g_ui.pillEthLabel,    "ETH: -");
+    g_ui.pillWs     = hmiUiCreateInfoPill(g_ui.pillRowTop, &g_ui.pillWsLabel,     "WS: -");
+
+    g_ui.pillRowBottom = lv_obj_create(g_ui.root);
+    lv_obj_set_width(g_ui.pillRowBottom, lv_pct(100));
+    lv_obj_set_height(g_ui.pillRowBottom, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(g_ui.pillRowBottom, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.pillRowBottom, 0, 0);
+    lv_obj_set_style_pad_left(g_ui.pillRowBottom, 0, 0);
+    lv_obj_set_style_pad_right(g_ui.pillRowBottom, 0, 0);
+    lv_obj_set_style_pad_top(g_ui.pillRowBottom, 8, 0);
+    lv_obj_set_style_pad_bottom(g_ui.pillRowBottom, 0, 0);
+    lv_obj_set_layout(g_ui.pillRowBottom, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.pillRowBottom, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(g_ui.pillRowBottom, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.pillRowBottom, 8, 0);
+    lv_obj_set_style_pad_column(g_ui.pillRowBottom, 10, 0);
+
+    g_ui.pillMega1 = hmiUiCreateInfoPill(g_ui.pillRowBottom, &g_ui.pillMega1Label, "Mega1: -");
+    g_ui.pillMega2 = hmiUiCreateInfoPill(g_ui.pillRowBottom, &g_ui.pillMega2Label, "Mega2: -");
+    g_ui.pillMode  = hmiUiCreateInfoPill(g_ui.pillRowBottom, &g_ui.pillModeLabel,  "Modus: -");
+    g_ui.pillPower = hmiUiCreateInfoPill(g_ui.pillRowBottom, &g_ui.pillPowerLabel, "Power: -");
+
     g_ui.statusLabel = lv_label_create(g_ui.root);
     lv_obj_set_width(g_ui.statusLabel, lv_pct(100));
     lv_label_set_long_mode(g_ui.statusLabel, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(g_ui.statusLabel, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(g_ui.statusLabel, lv_color_white(), 0);
+    lv_obj_add_flag(g_ui.statusLabel, LV_OBJ_FLAG_HIDDEN);
 
     g_ui.detailLabel = lv_label_create(g_ui.root);
     lv_obj_set_width(g_ui.detailLabel, lv_pct(100));
@@ -828,20 +1007,7 @@ static void createMainUi() {
     lv_obj_set_style_text_font(g_ui.detailLabel, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(g_ui.detailLabel, lv_color_white(), 0);
 
-    lv_obj_t* btnRowTop = lv_obj_create(g_ui.root);
-    lv_obj_set_width(btnRowTop, lv_pct(100));
-    lv_obj_set_height(btnRowTop, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(btnRowTop, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(btnRowTop, 0, 0);
-    lv_obj_set_style_pad_left(btnRowTop, 0, 0);
-    lv_obj_set_style_pad_right(btnRowTop, 0, 0);
-    lv_obj_set_style_pad_top(btnRowTop, 8, 0);
-    lv_obj_set_style_pad_bottom(btnRowTop, 0, 0);
-    lv_obj_set_layout(btnRowTop, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(btnRowTop, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(btnRowTop, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(btnRowTop, 8, 0);
-    lv_obj_set_style_pad_column(btnRowTop, 12, 0);
+    lv_obj_add_flag(g_ui.detailLabel, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* btnRowBottom = lv_obj_create(g_ui.root);
     lv_obj_set_width(btnRowBottom, lv_pct(100));
@@ -857,25 +1023,17 @@ static void createMainUi() {
     lv_obj_set_flex_align(btnRowBottom, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
     lv_obj_set_style_pad_row(btnRowBottom, 8, 0);
     lv_obj_set_style_pad_column(btnRowBottom, 12, 0);
-    
-    g_ui.m1TestBtn = hmiUiCreateActionButton(btnRowTop, &g_ui.m1TestBtnLabel, "M1 TEST");
-    lv_obj_set_width(g_ui.m1TestBtn, 150);
-    lv_obj_add_event_cb(g_ui.m1TestBtn, hmiUiOnM1TestClicked, LV_EVENT_CLICKED, nullptr);
 
-    g_ui.m2TestBtn = hmiUiCreateActionButton(btnRowTop, &g_ui.m2TestBtnLabel, "M2 TEST");
-    lv_obj_set_width(g_ui.m2TestBtn, 150);
-    lv_obj_add_event_cb(g_ui.m2TestBtn, hmiUiOnM2TestClicked, LV_EVENT_CLICKED, nullptr);
-
-    g_ui.ackBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.ackBtnLabel, "ACK");
-    lv_obj_set_width(g_ui.ackBtn, 110);
-    lv_obj_add_event_cb(g_ui.ackBtn, hmiUiOnAckClicked, LV_EVENT_CLICKED, nullptr);
-
-    g_ui.powerBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.powerBtnLabel, "POWER");
-    lv_obj_set_width(g_ui.powerBtn, 140);
+    g_ui.powerBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.powerBtnLabel, "POWER ON");
+    lv_obj_set_width(g_ui.powerBtn, 160);
     lv_obj_add_event_cb(g_ui.powerBtn, hmiUiOnPowerClicked, LV_EVENT_CLICKED, nullptr);
 
+    g_ui.powerOffBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.powerOffBtnLabel, "STOP / POWER OFF");
+    lv_obj_set_width(g_ui.powerOffBtn, 220);
+    lv_obj_add_event_cb(g_ui.powerOffBtn, hmiUiOnPowerOffClicked, LV_EVENT_CLICKED, nullptr);
+
     g_ui.autoBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.autoBtnLabel, "AUTO");
-    lv_obj_set_width(g_ui.autoBtn, 120);
+    lv_obj_set_width(g_ui.autoBtn, 140);
     lv_obj_add_event_cb(g_ui.autoBtn, hmiUiOnAutoClicked, LV_EVENT_CLICKED, nullptr);
 
     g_ui.startupOverlay = lv_obj_create(screen);
@@ -1019,8 +1177,14 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         if (jsonFindBool(actions, "\"canPowerOn\"", &b)) {
             g_dbg.actionCanPowerOn = b;
         }
+        if (jsonFindBool(actions, "\"canPowerOff\"", &b)) {
+            g_dbg.actionCanPowerOff = b;
+        }
         if (jsonFindBool(actions, "\"canAuto\"", &b)) {
             g_dbg.actionCanAuto = b;
+        }
+        if (jsonFindBool(actions, "\"canManual\"", &b)) {
+            g_dbg.actionCanManual = b;
         }
         if (jsonFindBool(actions, "\"canStartM1Selftest\"", &b)) {
             g_dbg.actionCanStartM1Selftest = b;
@@ -1055,7 +1219,31 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     }
 }
 
+static void hmiOnDebugToggle(lv_event_t* e) {
+    (void)e;
+    g_debugExpanded = !g_debugExpanded;
+
+    if (g_debugExpanded) {
+        if (g_debugLabelLeft) lv_obj_clear_flag(g_debugLabelLeft, LV_OBJ_FLAG_HIDDEN);
+        if (g_debugLabelRight) lv_obj_clear_flag(g_debugLabelRight, LV_OBJ_FLAG_HIDDEN);
+        if (g_debugToggleLabel) lv_label_set_text(g_debugToggleLabel, "DEBUG ON");
+    } else {
+        if (g_debugLabelLeft) lv_obj_add_flag(g_debugLabelLeft, LV_OBJ_FLAG_HIDDEN);
+        if (g_debugLabelRight) lv_obj_add_flag(g_debugLabelRight, LV_OBJ_FLAG_HIDDEN);
+        if (g_debugToggleLabel) lv_label_set_text(g_debugToggleLabel, "DEBUG OFF");
+    }
+}
+
 static void createDebugOverlay() {
+    g_debugToggleBtn = lv_btn_create(lv_scr_act());
+    lv_obj_set_size(g_debugToggleBtn, 140, 44);
+    lv_obj_align(g_debugToggleBtn, LV_ALIGN_TOP_RIGHT, -8, 8);
+    lv_obj_add_event_cb(g_debugToggleBtn, hmiOnDebugToggle, LV_EVENT_CLICKED, nullptr);
+
+    g_debugToggleLabel = lv_label_create(g_debugToggleBtn);
+    lv_label_set_text(g_debugToggleLabel, "DEBUG OFF");
+    lv_obj_center(g_debugToggleLabel);
+
     g_debugLabelLeft = lv_label_create(lv_scr_act());
     g_debugLabelRight = lv_label_create(lv_scr_act());
 
@@ -1074,8 +1262,8 @@ static void createDebugOverlay() {
         lv_obj_set_width(lbl, 208);
     }
 
-    lv_obj_align(g_debugLabelLeft, LV_ALIGN_TOP_RIGHT, -232, 8);
-    lv_obj_align(g_debugLabelRight, LV_ALIGN_TOP_RIGHT, -8, 8);
+    lv_obj_align(g_debugLabelLeft, LV_ALIGN_TOP_RIGHT, -232, 60);
+    lv_obj_align(g_debugLabelRight, LV_ALIGN_TOP_RIGHT, -8, 60);
 
     lv_label_set_text(
         g_debugLabelLeft,
@@ -1105,10 +1293,15 @@ static void createDebugOverlay() {
         "txErr: 0\n"
         "txDrop: 0\n"
         "lastTx: -\n"
+        "uiMsLast: 0\n"
+        "uiMsMax: 0\n"
         "CTRL: FREE\n"
         "WRITE: LOCK\n"
         "lastMsg: boot"
     );
+
+    lv_obj_add_flag(g_debugLabelLeft, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(g_debugLabelRight, LV_OBJ_FLAG_HIDDEN);
 }
 
 static void updateDebugOverlay() {
@@ -1169,6 +1362,8 @@ static void updateDebugOverlay() {
         "txErr: %lu\n"
         "txDrop: %lu\n"
         "lastTx: %s\n"
+        "uiMsLast: %lu\n"
+        "uiMsMax: %lu\n"
         "CTRL: %s\n"
         "WRITE: %s\n"
         "lastMsg: %s",
@@ -1180,6 +1375,8 @@ static void updateDebugOverlay() {
         (unsigned long)g_dbg.txErr,
         (unsigned long)g_dbg.txDropped,
         g_dbg.lastTx,
+        (unsigned long)g_uiUpdateLastMs,
+        (unsigned long)g_uiUpdateMaxMs,
         hmiUiCtrlText(),
         hmiUiWriteText(),
         g_dbg.lastMsgType
@@ -1213,7 +1410,9 @@ static void updateDummyDebugState() {
     g_dbg.actionCanWrite = !g_dbg.diagActive;
     g_dbg.actionCanAck = true;
     g_dbg.actionCanPowerOn = true;
+    g_dbg.actionCanPowerOff = ((g_dbg.rxFrames % 5) != 0);
     g_dbg.actionCanAuto = true;
+    g_dbg.actionCanManual = ((g_dbg.rxFrames % 3) != 0);
     hmiTxSetLast("-");
 
     if ((g_dbg.rxFrames % 10) == 0) {
@@ -1458,12 +1657,19 @@ void loop() {
 
 
         if (lvgl_port_lock(-1)) {
+            const uint32_t uiStartMs = millis();
             hmiUiUpdate();
             if (overlayDue || uiDue) {
                 updateDebugOverlay();
             }
             lvgl_port_unlock();
             g_uiDirty = false;
+
+            const uint32_t uiElapsedMs = millis() - uiStartMs;
+            g_uiUpdateLastMs = uiElapsedMs;
+            if (uiElapsedMs > g_uiUpdateMaxMs) {
+                g_uiUpdateMaxMs = uiElapsedMs;
+            }
         }
 
         // Direkt nach dem UI-Update erneut abholen, falls während LVGL neue Bytes ankamen.
