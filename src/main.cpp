@@ -75,7 +75,12 @@ struct HmiDebugState {
     bool actionCanStartM1Selftest = false;
     bool actionCanStartM2Selftest = false;
     bool actionCanStartupConfirm = false;
+    bool summaryWarningPresent = false;
     bool actionCanWrite = false;
+    uint16_t analogVA10 = 0;
+    uint16_t analogVB10 = 0;
+    uint32_t analogTsMs = 0;
+    uint32_t analogAgeMs = 0;
     uint32_t txFrames = 0;
     uint32_t txErr = 0;
     uint32_t txDropped = 0;
@@ -150,6 +155,7 @@ static bool g_debugExpanded = false;
 static uint32_t g_uiUpdateLastMs = 0;
 static uint32_t g_uiUpdateMaxMs = 0;
 static bool g_stateUiPending = false;
+static bool g_analogDirty = false;
 static uint32_t g_stateUiPendingSinceMs = 0;
 
 static constexpr uint32_t HMI_STATE_UI_COALESCE_MS = 100;
@@ -193,6 +199,8 @@ static void frameParserProcessByte(uint8_t b);
 static bool hmiStartupAllDone();
 static bool jsonFindString(const char* json, const char* key, char* out, size_t outSize);
 static bool hmiJsonTypeIs(const char* json, const char* typeValue);
+static bool hmiJsonIsAnalog(const char* json);
+static void hmiDebugExtractAnalogFromJson(const char* json);
 static bool hmiJsonIsStateLike(const char* json);
 
 static const char* rxStateToText(HmiRxState st) {
@@ -472,6 +480,10 @@ static bool hmiJsonTypeIs(const char* json, const char* typeValue) {
     }
 
     return strcmp(typeBuf, typeValue) == 0;
+}
+
+static bool hmiJsonIsAnalog(const char* json) {
+    return hmiJsonTypeIs(json, "analog");
 }
 
 static bool hmiJsonIsStateLike(const char* json) {
@@ -1083,6 +1095,7 @@ static void hmiUiBuildStatusTexts(
     const bool m1Warn = g_dbg.mega1Online && g_dbg.startupM1Needs && (!g_dbg.startupM1SelftestDone);
     const bool m2Warn = g_dbg.mega2Online && g_dbg.startupM2Needs && (!g_dbg.startupM2SelftestDone);
     const bool systemWarn =
+        g_dbg.summaryWarningPresent ||
         g_dbg.safetyLock ||
         g_dbg.safetyAckRequired ||
         g_dbg.safetyNotausActive ||
@@ -1286,6 +1299,7 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         bool actionCanStartM1Selftest = false;
         bool actionCanStartM2Selftest = false;
         bool actionCanStartupConfirm = false;
+        bool summaryWarningPresent = false;
         bool actionCanWrite = false;
 
         bool diagActive = false;
@@ -1325,6 +1339,7 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     next.actionCanStartM1Selftest = g_dbg.actionCanStartM1Selftest;
     next.actionCanStartM2Selftest = g_dbg.actionCanStartM2Selftest;
     next.actionCanStartupConfirm = g_dbg.actionCanStartupConfirm;
+    next.summaryWarningPresent = g_dbg.summaryWarningPresent;
     next.actionCanWrite = g_dbg.actionCanWrite;
 
     next.diagActive = g_dbg.diagActive;
@@ -1374,6 +1389,13 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         }
         if (jsonFindBool(safety, "\"powerOn\"", &b)) {
             next.safetyPowerOn = b;
+        }
+    }
+
+    const char* summary = strstr(json, "\"summary\"");
+    if (summary) {
+        if (jsonFindBool(summary, "\"warningPresent\"", &b)) {
+            next.summaryWarningPresent = b;
         }
     }
 
@@ -1491,6 +1513,7 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     g_dbg.actionCanStartM1Selftest = next.actionCanStartM1Selftest;
     g_dbg.actionCanStartM2Selftest = next.actionCanStartM2Selftest;
     g_dbg.actionCanStartupConfirm = next.actionCanStartupConfirm;
+    g_dbg.summaryWarningPresent = next.summaryWarningPresent;
     g_dbg.actionCanWrite = next.actionCanWrite;
 
     g_dbg.diagActive = next.diagActive;
@@ -1498,6 +1521,39 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     g_dbg.ethIp[sizeof(g_dbg.ethIp) - 1] = '\0';
     strncpy(g_dbg.diagOwner, next.diagOwner, sizeof(g_dbg.diagOwner) - 1);
     g_dbg.diagOwner[sizeof(g_dbg.diagOwner) - 1] = '\0';
+}
+
+static void hmiDebugExtractAnalogFromJson(const char* json) {
+    if (!json) {
+        return;
+    }
+
+    const char* analog = strstr(json, "\"analog\"");
+    if (!analog) {
+        return;
+    }
+
+    uint32_t u32 = 0;
+    bool changed = false;
+
+    if (jsonFindUInt32(analog, "\"vA10\"", &u32)) {
+        const uint16_t v = (uint16_t)u32;
+        if (g_dbg.analogVA10 != v) {
+            g_dbg.analogVA10 = v;
+            changed = true;
+        }
+    }
+    if (jsonFindUInt32(analog, "\"vB10\"", &u32)) {
+        const uint16_t v = (uint16_t)u32;
+        if (g_dbg.analogVB10 != v) {
+            g_dbg.analogVB10 = v;
+            changed = true;
+        }
+    }
+    if (jsonFindUInt32(analog, "\"tsMs\"", &u32))  g_dbg.analogTsMs = u32;
+    if (jsonFindUInt32(analog, "\"ageMs\"", &u32)) g_dbg.analogAgeMs = u32;
+
+    g_analogDirty = g_analogDirty || changed;
 }
 
 static void hmiOnDebugToggle(lv_event_t* e) {
@@ -1576,6 +1632,8 @@ static void createDebugOverlay() {
         "lastTx: -\n"
         "uiMsLast: 0\n"
         "uiMsMax: 0\n"
+        "vA10: 0\n"
+        "vB10: 0\n"
         "CTRL: FREE\n"
         "WRITE: LOCK\n"
         "lastMsg: boot"
@@ -1645,6 +1703,8 @@ static void updateDebugOverlay() {
         "lastTx: %s\n"
         "uiMsLast: %lu\n"
         "uiMsMax: %lu\n"
+        "vA10: %u\n"
+        "vB10: %u\n"
         "CTRL: %s\n"
         "WRITE: %s\n"
         "lastMsg: %s",
@@ -1658,6 +1718,8 @@ static void updateDebugOverlay() {
         g_dbg.lastTx,
         (unsigned long)g_uiUpdateLastMs,
         (unsigned long)g_uiUpdateMaxMs,
+        (unsigned)g_dbg.analogVA10,
+        (unsigned)g_dbg.analogVB10,
         hmiUiCtrlText(),
         hmiUiWriteText(),
         g_dbg.lastMsgType
@@ -1739,16 +1801,19 @@ static void frameParserCommitPayload() {
     }
 
     hmiDebugSetMsgTypeFromJson(g_uartFrameBuf);
-    hmiDebugExtractStatusFromJson(g_uartFrameBuf);
-
     g_dbg.lastOkLen = (uint16_t)g_uartFramePos;
 
-    // ❗ HIER Änderung:
-    if (!g_stateUiPending) {
-        g_stateUiPendingSinceMs = millis();
-    }
-    g_stateUiPending = true;
+    if (hmiJsonIsAnalog(g_uartFrameBuf)) {
+        hmiDebugExtractAnalogFromJson(g_uartFrameBuf);
+    } else {
+        hmiDebugExtractStatusFromJson(g_uartFrameBuf);
 
+        if (!g_stateUiPending) {
+            g_stateUiPendingSinceMs = millis();
+        }
+        g_stateUiPending = true;
+    }
+    
     g_dbg.jsonOk++;
     frameParserReset();
 }
