@@ -77,6 +77,16 @@ struct HmiDebugState {
     bool actionCanStartupConfirm = false;
     bool summaryWarningPresent = false;
     bool actionCanWrite = false;
+    bool mega1SelftestRetryAvailable = false;
+    bool mega2SelftestRetryAvailable = false;
+    uint8_t mega1BahnhofMask = 0;
+    bool uiStartupOverlayActive = false;
+    bool uiM1RetryOverlayActive = false;
+    bool uiM2RetryOverlayActive = false;
+    char uiOverlayMode[16] = "none";
+    char uiRetryScope[16] = "none";
+    char mega1DefectList[64] = "";
+    char mega2DefectList[32] = "";
     uint16_t analogVA10 = 0;
     uint16_t analogVB10 = 0;
     uint32_t analogTsMs = 0;
@@ -93,6 +103,11 @@ struct HmiUi {
     lv_obj_t* root = nullptr;
     lv_obj_t* statusLabel = nullptr;
     lv_obj_t* detailLabel = nullptr;
+    lv_obj_t* defectRow = nullptr;
+    lv_obj_t* m1RetryBtn = nullptr;
+    lv_obj_t* m2RetryBtn = nullptr;
+    lv_obj_t* m1RetryBtnLabel = nullptr;
+    lv_obj_t* m2RetryBtnLabel = nullptr;
     
     lv_obj_t* pillRowTop = nullptr;
     lv_obj_t* pillRowBottom = nullptr;
@@ -131,6 +146,13 @@ struct HmiUi {
     lv_obj_t* startupM1Btn = nullptr;
     lv_obj_t* startupM2Btn = nullptr;
     lv_obj_t* startupAckBtn = nullptr;
+
+    lv_obj_t* retryOverlay = nullptr;
+    lv_obj_t* retryPanel = nullptr;
+    lv_obj_t* retryTitle = nullptr;
+    lv_obj_t* retryText = nullptr;
+    lv_obj_t* retryStatus = nullptr;
+    lv_obj_t* retryCloseBtn = nullptr;
 };
 
 static HmiDebugState g_dbg;
@@ -144,6 +166,8 @@ static uint32_t g_lastDebugOverlayUpdateMs = 0;
 static bool g_pendingStartupM1 = false;
 static bool g_pendingStartupM2 = false;
 static bool g_pendingStartupAck = false;
+static bool g_pendingM1Retry = false;
+static bool g_pendingM2Retry = false;
 
 static bool g_overlayM1VisibleEnabled = false;
 static bool g_overlayM2VisibleEnabled = false;
@@ -153,6 +177,11 @@ static uint32_t g_overlayM2LastTrueMs = 0;
 static char* g_uartFrameBuf = nullptr;
 static bool g_debugExpanded = false;
 static uint32_t g_uiUpdateLastMs = 0;
+static bool g_retrySessionM1Active = false;
+static bool g_retrySessionM2Active = false;
+static bool g_retryOverlayDismissed = false;
+static bool g_lastRetryM1Running = false;
+static bool g_lastRetryM2Running = false;
 static uint32_t g_uiUpdateMaxMs = 0;
 static bool g_stateUiPending = false;
 static bool g_analogDirty = false;
@@ -188,8 +217,11 @@ static void hmiUiOnAckClicked(lv_event_t* e);
 static void hmiUiOnM1TestClicked(lv_event_t* e);
 static void hmiUiOnM2TestClicked(lv_event_t* e);
 static void hmiUiOnStartupAckClicked(lv_event_t* e);
+static void hmiUiOnM1RetryClicked(lv_event_t* e);
+static void hmiUiOnM2RetryClicked(lv_event_t* e);
 static void hmiUiOnPowerClicked(lv_event_t* e);
 static void hmiUiOnPowerOffClicked(lv_event_t* e);
+static void hmiUiOnRetryCloseClicked(lv_event_t* e);
 static void hmiUiOnAutoClicked(lv_event_t* e);
 static void frameParserReset();
 static void frameParserCommitPayload();
@@ -197,7 +229,11 @@ static void frameParserCheckTimeout(uint32_t nowMs);
 static void frameParserProcessByte(uint8_t b);
 
 static bool hmiStartupAllDone();
+static bool hmiRetryOverlayActive();
+static void hmiRetryOverlayUpdate();
 static bool jsonFindString(const char* json, const char* key, char* out, size_t outSize);
+static bool jsonFindUInt32(const char* json, const char* key, uint32_t* outValue);
+static bool jsonFindUInt8(const char* json, const char* key, uint8_t* outValue);
 static bool hmiJsonTypeIs(const char* json, const char* typeValue);
 static bool hmiJsonIsAnalog(const char* json);
 static void hmiDebugExtractAnalogFromJson(const char* json);
@@ -276,6 +312,32 @@ static bool hmiCanSendM2TestNow() {
            g_dbg.startupM2Needs &&
            (!g_dbg.startupM2SelftestDone) &&
            (!g_dbg.startupM2SelftestRunning);
+}
+
+static bool hmiHasMega1Defects() {
+    return g_dbg.mega1DefectList[0] != '\0';
+}
+
+static bool hmiHasMega2Defects() {
+    return g_dbg.mega2DefectList[0] != '\0';
+}
+
+static bool hmiCanSendM1RetryNow() {
+    return hmiCanWriteNow() &&
+           g_dbg.mega1Online &&
+           hmiHasMega1Defects() &&
+           g_dbg.mega1SelftestRetryAvailable &&
+           (!g_dbg.startupM1SelftestRunning) &&
+           (!g_pendingM1Retry);
+}
+
+static bool hmiCanSendM2RetryNow() {
+    return hmiCanWriteNow() &&
+           g_dbg.mega2Online &&
+           hmiHasMega2Defects() &&
+           g_dbg.mega2SelftestRetryAvailable &&
+           (!g_dbg.startupM2SelftestRunning) &&
+           (!g_pendingM2Retry);
 }
 
 static bool hmiCanSendStartupConfirmNow() {
@@ -444,8 +506,6 @@ static bool hmiStartupOverlayActive() {
     if (g_dbg.startupChecklistActive ||
         g_dbg.startupM1Needs ||
         g_dbg.startupM2Needs ||
-        g_dbg.startupM1SelftestRunning ||
-        g_dbg.startupM2SelftestRunning ||
         g_dbg.safetyAckRequired) {
         g_startupSessionActive = true;
     }
@@ -454,14 +514,22 @@ static bool hmiStartupOverlayActive() {
     if (!g_dbg.startupChecklistActive &&
         !g_dbg.startupM1Needs &&
         !g_dbg.startupM2Needs &&
-        !g_dbg.startupM1SelftestRunning &&
-        !g_dbg.startupM2SelftestRunning &&
         !g_dbg.safetyAckRequired &&
         g_dbg.systemReady) {
         g_startupSessionActive = false;
     }
 
     return g_startupSessionActive;
+}
+
+static bool hmiRetryOverlayActive() {
+    if (g_retryOverlayDismissed) {
+        return false;
+    }
+    if (g_dbg.uiStartupOverlayActive) {
+        return false;
+    }
+    return g_dbg.uiM1RetryOverlayActive || g_dbg.uiM2RetryOverlayActive;
 }
 
 static bool hmiStartupAllDone() {
@@ -580,8 +648,18 @@ static bool jsonFindString(const char* json, const char* key, char* out, size_t 
     while (*p && *p != '"' && i < outSize - 1) {
         out[i++] = *p++;
     }
+    if (*p != '"') return false;
     out[i] = '\0';
-    return i > 0;
+    return true;
+}
+
+static bool jsonFindUInt8(const char* json, const char* key, uint8_t* outValue) {
+    uint32_t tmp = 0;
+    if (!outValue) return false;
+    if (!jsonFindUInt32(json, key, &tmp)) return false;
+    if (tmp > 0xFFu) return false;
+    *outValue = (uint8_t)tmp;
+    return true;
 }
 
 static bool jsonFindUInt32(const char* json, const char* key, uint32_t* outValue) {
@@ -673,6 +751,53 @@ static void hmiUiOnStartupAckClicked(lv_event_t* e) {
     g_uiDirty = true;
 
     hmiSendStartupConfirmSequence();
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnM1RetryClicked(lv_event_t* e) {
+    (void)e;
+    if (!hmiCanSendM1RetryNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-m1retry");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    g_pendingM1Retry = true;
+    g_retrySessionM1Active = true;
+    g_retrySessionM2Active = false;
+    g_retryOverlayDismissed = false;
+    g_uiDirty = true;
+
+    hmiSendActionCommand("m1SelftestStart");
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnM2RetryClicked(lv_event_t* e) {
+    (void)e;
+    if (!hmiCanSendM2RetryNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-m2retry");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    g_pendingM2Retry = true;
+    g_retrySessionM2Active = true;
+    g_retrySessionM1Active = false;
+    g_retryOverlayDismissed = false;
+    g_uiDirty = true;
+
+    hmiSendActionCommand("sbhfSelftestRetry");
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnRetryCloseClicked(lv_event_t* e) {
+    (void)e;
+    g_retryOverlayDismissed = true;
+    if (g_ui.retryOverlay) {
+        lv_obj_add_flag(g_ui.retryOverlay, LV_OBJ_FLAG_HIDDEN);
+    }
     hmiUiAfterTxAttempt();
 }
 
@@ -932,6 +1057,50 @@ static void hmiStartupOverlayUpdate() {
     );
 }
 
+static void hmiRetryOverlayUpdate() {
+    if (!g_ui.retryOverlay || !g_ui.retryTitle || !g_ui.retryText || !g_ui.retryStatus) {
+        return;
+    }
+
+    const bool active = hmiRetryOverlayActive();
+    if (!active) {
+        lv_obj_add_flag(g_ui.retryOverlay, LV_OBJ_FLAG_HIDDEN);
+        return;
+    }
+
+    lv_obj_clear_flag(g_ui.retryOverlay, LV_OBJ_FLAG_HIDDEN);
+
+    const bool showM1Running = g_retrySessionM1Active &&
+                               (g_dbg.startupM1SelftestRunning || g_pendingM1Retry);
+    const bool showM2Running = g_retrySessionM2Active &&
+                               (g_dbg.startupM2SelftestRunning || g_pendingM2Retry);
+
+    if (showM2Running) {
+        lv_label_set_text(g_ui.retryTitle, "SBHF Weichentest läuft");
+    } else {
+        lv_label_set_text(g_ui.retryTitle, "Mega1 Weichentest läuft");
+    }
+
+    lv_label_set_text(
+        g_ui.retryText,
+        "Bitte warten ...\n"
+        "Der Selbsttest läuft im Hintergrund\n"
+        "und wird automatisch abgeschlossen."
+    );
+
+    char buf[192];
+    if (showM2Running) {
+        snprintf(buf, sizeof(buf), "SBHF Retry aktiv.");
+    } else if (showM1Running) {
+        snprintf(buf, sizeof(buf), "Mega1 Retry aktiv.");
+    } else if (strcmp(g_dbg.uiOverlayMode, "retry") == 0) {
+        snprintf(buf, sizeof(buf), "Retry aktiv.");
+    } else {
+        snprintf(buf, sizeof(buf), "Warte auf Status ...");
+    }
+    lv_label_set_text(g_ui.retryStatus, buf);
+}
+
 static void hmiUiUpdate() {
     if (!g_ui.powerBtn || !g_ui.powerOffBtn || !g_ui.autoBtn) {
         return;
@@ -1009,7 +1178,50 @@ static void hmiUiUpdate() {
         g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_BLUE)
                             : lv_palette_main(LV_PALETTE_GREEN));
 
+    const bool showM2Defect = hmiHasMega2Defects();
+    const bool showM1Defect = hmiHasMega1Defects();
+    const bool showDefectRow = showM1Defect || showM2Defect;
+
+    char detailBuf[192];
+    detailBuf[0] = '\0';
+    if (showM2Defect) {
+        snprintf(detailBuf + strlen(detailBuf), sizeof(detailBuf) - strlen(detailBuf),
+                 "SBHF Defekt: %s", g_dbg.mega2DefectList);
+    }
+    if (showM1Defect) {
+        if (detailBuf[0] != '\0') {
+            strncat(detailBuf, "\n", sizeof(detailBuf) - strlen(detailBuf) - 1);
+        }
+        snprintf(detailBuf + strlen(detailBuf), sizeof(detailBuf) - strlen(detailBuf),
+                 "Mega1 Defekt: %s", g_dbg.mega1DefectList);
+    }
+
+    lv_label_set_text(g_ui.detailLabel, detailBuf);
+    if (showDefectRow) {
+        lv_obj_clear_flag(g_ui.detailLabel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_clear_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(g_ui.detailLabel, LV_OBJ_FLAG_HIDDEN);
+        lv_obj_add_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    hmiUiSetButtonEnabled(
+        g_ui.m2RetryBtn,
+        g_ui.m2RetryBtnLabel,
+        showM2Defect && hmiCanSendM2RetryNow(),
+        "SBHF RETRY"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.m1RetryBtn,
+        g_ui.m1RetryBtnLabel,
+        showM1Defect && hmiCanSendM1RetryNow(),
+        "MEGA1 RETRY"
+    );
+    hmiUiSetActionButtonColor(g_ui.m2RetryBtn, lv_palette_main(LV_PALETTE_ORANGE));
+    hmiUiSetActionButtonColor(g_ui.m1RetryBtn, lv_palette_main(LV_PALETTE_ORANGE));                            
+
     hmiStartupOverlayUpdate();
+    hmiRetryOverlayUpdate();
 }
 
 static lv_obj_t* hmiUiCreateActionButton(lv_obj_t* parent, lv_obj_t** outLabel, const char* text) {
@@ -1047,7 +1259,6 @@ static lv_obj_t* hmiUiCreateInfoPill(lv_obj_t* parent, lv_obj_t** outLabel, cons
     lv_obj_set_style_pad_top(pill, 6, 0);
     lv_obj_set_style_pad_bottom(pill, 6, 0);
     lv_obj_clear_flag(pill, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_add_flag(pill, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_clear_flag(pill, LV_OBJ_FLAG_SCROLLABLE);
 
     lv_obj_t* label = lv_label_create(pill);
@@ -1187,8 +1398,32 @@ static void createMainUi() {
     lv_label_set_long_mode(g_ui.detailLabel, LV_LABEL_LONG_WRAP);
     lv_obj_set_style_text_font(g_ui.detailLabel, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(g_ui.detailLabel, lv_color_white(), 0);
+    lv_label_set_text(g_ui.detailLabel, "");
 
-    lv_obj_add_flag(g_ui.detailLabel, LV_OBJ_FLAG_HIDDEN);
+    g_ui.defectRow = lv_obj_create(g_ui.root);
+    lv_obj_set_width(g_ui.defectRow, lv_pct(100));
+    lv_obj_set_height(g_ui.defectRow, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(g_ui.defectRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.defectRow, 0, 0);
+    lv_obj_set_style_pad_left(g_ui.defectRow, 0, 0);
+    lv_obj_set_style_pad_right(g_ui.defectRow, 0, 0);
+    lv_obj_set_style_pad_top(g_ui.defectRow, 6, 0);
+    lv_obj_set_style_pad_bottom(g_ui.defectRow, 0, 0);
+    lv_obj_set_layout(g_ui.defectRow, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.defectRow, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(g_ui.defectRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.defectRow, 8, 0);
+    lv_obj_set_style_pad_column(g_ui.defectRow, 12, 0);
+
+    g_ui.m2RetryBtn = hmiUiCreateActionButton(g_ui.defectRow, &g_ui.m2RetryBtnLabel, "SBHF RETRY");
+    lv_obj_set_width(g_ui.m2RetryBtn, 170);
+    lv_obj_add_event_cb(g_ui.m2RetryBtn, hmiUiOnM2RetryClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.m1RetryBtn = hmiUiCreateActionButton(g_ui.defectRow, &g_ui.m1RetryBtnLabel, "MEGA1 RETRY");
+    lv_obj_set_width(g_ui.m1RetryBtn, 185);
+    lv_obj_add_event_cb(g_ui.m1RetryBtn, hmiUiOnM1RetryClicked, LV_EVENT_CLICKED, nullptr);
+
+    lv_obj_add_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
 
     lv_obj_t* btnRowBottom = lv_obj_create(g_ui.root);
     lv_obj_set_width(btnRowBottom, lv_pct(100));
@@ -1262,6 +1497,45 @@ static void createMainUi() {
     lv_obj_add_event_cb(g_ui.startupAckBtn, hmiUiOnStartupAckClicked, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
 
+    g_ui.retryOverlay = lv_obj_create(screen);
+    lv_obj_set_size(g_ui.retryOverlay, lv_pct(100), lv_pct(100));
+    lv_obj_align(g_ui.retryOverlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.retryOverlay, LV_OPA_70, 0);
+    lv_obj_set_style_bg_color(g_ui.retryOverlay, lv_color_black(), 0);
+    lv_obj_set_style_border_width(g_ui.retryOverlay, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.retryOverlay, 0, 0);
+
+    g_ui.retryPanel = lv_obj_create(g_ui.retryOverlay);
+    lv_obj_set_width(g_ui.retryPanel, lv_pct(82));
+    lv_obj_set_height(g_ui.retryPanel, LV_SIZE_CONTENT);
+    lv_obj_center(g_ui.retryPanel);
+    lv_obj_set_style_radius(g_ui.retryPanel, 14, 0);
+    lv_obj_set_style_pad_all(g_ui.retryPanel, 16, 0);
+    lv_obj_set_layout(g_ui.retryPanel, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.retryPanel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(g_ui.retryPanel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.retryPanel, 10, 0);
+
+    g_ui.retryTitle = lv_label_create(g_ui.retryPanel);
+    lv_label_set_text(g_ui.retryTitle, "Weichentest laeuft");
+    lv_obj_set_style_text_font(g_ui.retryTitle, &lv_font_montserrat_26, 0);
+
+    g_ui.retryText = lv_label_create(g_ui.retryPanel);
+    lv_obj_set_width(g_ui.retryText, lv_pct(100));
+    lv_label_set_long_mode(g_ui.retryText, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(g_ui.retryText, "Bitte warten ...");
+
+    g_ui.retryStatus = lv_label_create(g_ui.retryPanel);
+    lv_obj_set_width(g_ui.retryStatus, lv_pct(100));
+    lv_label_set_long_mode(g_ui.retryStatus, LV_LABEL_LONG_WRAP);
+
+    g_ui.retryCloseBtn = hmiUiCreateOverlayButton(g_ui.retryPanel, "AUSBLENDEN");
+    lv_obj_set_width(g_ui.retryCloseBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.retryCloseBtn, hmiUiOnRetryCloseClicked, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(g_ui.retryOverlay, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_add_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
+
     hmiUiUpdate();
 }
 
@@ -1301,6 +1575,16 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         bool actionCanStartupConfirm = false;
         bool summaryWarningPresent = false;
         bool actionCanWrite = false;
+        bool mega1SelftestRetryAvailable = false;
+        bool mega2SelftestRetryAvailable = false;
+        uint8_t mega1BahnhofMask = 0;
+        bool uiStartupOverlayActive = false;
+        bool uiM1RetryOverlayActive = false;
+        bool uiM2RetryOverlayActive = false;
+        char uiOverlayMode[16] = "none";
+        char uiRetryScope[16] = "none";
+        char mega1DefectList[64] = "";
+        char mega2DefectList[32] = "";
 
         bool diagActive = false;
         char ethIp[16] = "-";
@@ -1341,6 +1625,20 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     next.actionCanStartupConfirm = g_dbg.actionCanStartupConfirm;
     next.summaryWarningPresent = g_dbg.summaryWarningPresent;
     next.actionCanWrite = g_dbg.actionCanWrite;
+    next.mega1SelftestRetryAvailable = g_dbg.mega1SelftestRetryAvailable;
+    next.mega2SelftestRetryAvailable = g_dbg.mega2SelftestRetryAvailable;
+    next.uiStartupOverlayActive = g_dbg.uiStartupOverlayActive;
+    next.uiM1RetryOverlayActive = g_dbg.uiM1RetryOverlayActive;
+    next.uiM2RetryOverlayActive = g_dbg.uiM2RetryOverlayActive;
+    strncpy(next.uiOverlayMode, g_dbg.uiOverlayMode, sizeof(next.uiOverlayMode) - 1);
+    next.uiOverlayMode[sizeof(next.uiOverlayMode) - 1] = '\0';
+    strncpy(next.uiRetryScope, g_dbg.uiRetryScope, sizeof(next.uiRetryScope) - 1);
+    next.uiRetryScope[sizeof(next.uiRetryScope) - 1] = '\0';
+    next.mega1BahnhofMask = g_dbg.mega1BahnhofMask;
+    strncpy(next.mega1DefectList, g_dbg.mega1DefectList, sizeof(next.mega1DefectList) - 1);
+    next.mega1DefectList[sizeof(next.mega1DefectList) - 1] = '\0';
+    strncpy(next.mega2DefectList, g_dbg.mega2DefectList, sizeof(next.mega2DefectList) - 1);
+    next.mega2DefectList[sizeof(next.mega2DefectList) - 1] = '\0';
 
     next.diagActive = g_dbg.diagActive;
 
@@ -1369,11 +1667,27 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         if (jsonFindBool(mega1, "\"modeAuto\"", &b)) {
             next.mega1ModeAuto = b;
         }
+        if (jsonFindBool(mega1, "\"selftestRetryAvailable\"", &b)) {
+            next.mega1SelftestRetryAvailable = b;
+        }
+        uint8_t u8 = 0;
+        if (jsonFindUInt8(mega1, "\"bahnhofMask\"", &u8)) {
+            next.mega1BahnhofMask = u8;
+        }
+        if (jsonFindString(mega1, "\"defectList\"", next.mega1DefectList, sizeof(next.mega1DefectList))) {
+        }
     }
 
     const char* mega2 = strstr(json, "\"mega2\"");
-    if (mega2 && jsonFindBool(mega2, "\"online\"", &b)) {
-        next.mega2Online = b;
+    if (mega2) {
+        if (jsonFindBool(mega2, "\"online\"", &b)) {
+            next.mega2Online = b;
+        }
+        if (jsonFindBool(mega2, "\"selftestRetryAvailable\"", &b)) {
+            next.mega2SelftestRetryAvailable = b;
+        }
+        if (jsonFindString(mega2, "\"defectList\"", next.mega2DefectList, sizeof(next.mega2DefectList))) {
+        }
     }
 
     const char* safety = strstr(json, "\"safety\"");
@@ -1467,6 +1781,23 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         }
     }
 
+    const char* ui = strstr(json, "\"ui\"");
+    if (ui) {
+        if (jsonFindBool(ui, "\"startupOverlayActive\"", &b)) {
+            next.uiStartupOverlayActive = b;
+        }
+        if (jsonFindBool(ui, "\"m1RetryOverlayActive\"", &b)) {
+            next.uiM1RetryOverlayActive = b;
+        }
+        if (jsonFindBool(ui, "\"m2RetryOverlayActive\"", &b)) {
+            next.uiM2RetryOverlayActive = b;
+        }
+        if (jsonFindString(ui, "\"overlayMode\"", next.uiOverlayMode, sizeof(next.uiOverlayMode))) {
+        }
+        if (jsonFindString(ui, "\"retryScope\"", next.uiRetryScope, sizeof(next.uiRetryScope))) {
+        }
+    }
+
     const char* ws = strstr(json, "\"wsClients\"");
     if (ws) {
         if (jsonFindUInt32(ws, "\"total\"", &u32)) {
@@ -1515,6 +1846,86 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     g_dbg.actionCanStartupConfirm = next.actionCanStartupConfirm;
     g_dbg.summaryWarningPresent = next.summaryWarningPresent;
     g_dbg.actionCanWrite = next.actionCanWrite;
+    g_dbg.mega1SelftestRetryAvailable = next.mega1SelftestRetryAvailable;
+    g_dbg.mega2SelftestRetryAvailable = next.mega2SelftestRetryAvailable;
+    g_dbg.uiStartupOverlayActive = next.uiStartupOverlayActive;
+    g_dbg.uiM1RetryOverlayActive = next.uiM1RetryOverlayActive;
+    g_dbg.uiM2RetryOverlayActive = next.uiM2RetryOverlayActive;
+    strncpy(g_dbg.uiOverlayMode, next.uiOverlayMode, sizeof(g_dbg.uiOverlayMode) - 1);
+    g_dbg.uiOverlayMode[sizeof(g_dbg.uiOverlayMode) - 1] = '\0';
+    strncpy(g_dbg.uiRetryScope, next.uiRetryScope, sizeof(g_dbg.uiRetryScope) - 1);
+    g_dbg.uiRetryScope[sizeof(g_dbg.uiRetryScope) - 1] = '\0';
+    g_dbg.mega1BahnhofMask = next.mega1BahnhofMask;
+    strncpy(g_dbg.mega1DefectList, next.mega1DefectList, sizeof(g_dbg.mega1DefectList) - 1);
+    g_dbg.mega1DefectList[sizeof(g_dbg.mega1DefectList) - 1] = '\0';
+    strncpy(g_dbg.mega2DefectList, next.mega2DefectList, sizeof(g_dbg.mega2DefectList) - 1);
+    g_dbg.mega2DefectList[sizeof(g_dbg.mega2DefectList) - 1] = '\0';
+
+    const bool m1RunningNow = g_dbg.startupM1SelftestRunning;
+    const bool m2RunningNow = g_dbg.startupM2SelftestRunning;
+
+    if (m1RunningNow || !g_dbg.mega1SelftestRetryAvailable) {
+        g_pendingM1Retry = false;
+    }
+    if (m2RunningNow || !g_dbg.mega2SelftestRetryAvailable) {
+        g_pendingM2Retry = false;
+    }
+
+    // Fallback: Falls ein Retry lokal gestartet wurde, aber nie in den Running-Zustand
+    // übergeht oder die Voraussetzungen zwischenzeitlich wegfallen, Session sauber lösen.
+    if (g_retrySessionM1Active &&
+        !m1RunningNow &&
+        g_pendingM1Retry &&
+        (!g_dbg.mega1SelftestRetryAvailable || !hmiHasMega1Defects() || !hmiCanWriteNow())) {
+        g_pendingM1Retry = false;
+        g_retrySessionM1Active = false;
+        g_retryOverlayDismissed = false;
+    }
+
+    if (g_retrySessionM2Active &&
+        !m2RunningNow &&
+        g_pendingM2Retry &&
+        (!g_dbg.mega2SelftestRetryAvailable || !hmiHasMega2Defects() || !hmiCanWriteNow())) {
+        g_pendingM2Retry = false;
+        g_retrySessionM2Active = false;
+        g_retryOverlayDismissed = false;
+    }
+
+    if (g_retrySessionM1Active) {
+        const bool startupContextStillActive =
+            g_dbg.startupChecklistActive || g_dbg.safetyAckRequired;
+        if (!m1RunningNow &&
+            !g_pendingM1Retry &&
+            !startupContextStillActive) {
+            g_pendingM1Retry = false;
+            g_retrySessionM1Active = false;
+            g_retryOverlayDismissed = false;
+        }
+    }
+
+    if (g_retrySessionM2Active) {
+        const bool startupContextStillActive =
+            g_dbg.startupChecklistActive || g_dbg.safetyAckRequired;
+        if (!m2RunningNow &&
+            !g_pendingM2Retry &&
+            !startupContextStillActive) {
+            g_pendingM2Retry = false;
+            g_retrySessionM2Active = false;
+            g_retryOverlayDismissed = false;
+        }
+    }
+
+    // Falls das Overlay lokal ausgeblendet wurde, aber ein neuer Retry wirklich anlaeuft,
+    // soll es fuer die neue Session wieder erscheinen.
+    if (!g_lastRetryM1Running && m1RunningNow && g_retrySessionM1Active) {
+        g_retryOverlayDismissed = false;
+    }
+    if (!g_lastRetryM2Running && m2RunningNow && g_retrySessionM2Active) {
+        g_retryOverlayDismissed = false;
+    }
+
+    g_lastRetryM1Running = m1RunningNow;
+    g_lastRetryM2Running = m2RunningNow;
 
     g_dbg.diagActive = next.diagActive;
     strncpy(g_dbg.ethIp, next.ethIp, sizeof(g_dbg.ethIp) - 1);
