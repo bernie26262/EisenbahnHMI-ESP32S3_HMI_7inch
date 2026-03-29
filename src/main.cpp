@@ -91,6 +91,9 @@ struct HmiDebugState {
     uint16_t analogVB10 = 0;
     uint32_t analogTsMs = 0;
     uint32_t analogAgeMs = 0;
+
+    // UI helper / derived text state
+    // (keine Protokollfelder, nur für Darstellung)
     uint32_t txFrames = 0;
     uint32_t txErr = 0;
     uint32_t txDropped = 0;
@@ -101,6 +104,46 @@ struct HmiDebugState {
 
 struct HmiUi {
     lv_obj_t* root = nullptr;
+    lv_obj_t* title = nullptr;
+
+    // main split
+    lv_obj_t* leftPane = nullptr;
+    lv_obj_t* rightPane = nullptr;
+    lv_obj_t* mainContent = nullptr;
+
+    // right panels
+    lv_obj_t* actionPanel = nullptr;
+    lv_obj_t* lockPanel = nullptr;
+    lv_obj_t* systemPanel = nullptr;
+    lv_obj_t* defectPanel = nullptr;
+    lv_obj_t* trafoPanel = nullptr;
+
+    // right panel titles / texts
+    lv_obj_t* lockLabel = nullptr;
+    lv_obj_t* defectTitle = nullptr;
+    lv_obj_t* m2DefectLabel = nullptr;
+    lv_obj_t* m1DefectLabel = nullptr;
+    lv_obj_t* trafoLabelA = nullptr;
+    lv_obj_t* trafoLabelB = nullptr;
+
+    // status table rows
+    lv_obj_t* rowEthValue = nullptr;
+    lv_obj_t* rowEthValueLabel = nullptr;
+    lv_obj_t* rowMega1Value = nullptr;
+    lv_obj_t* rowMega1ValueLabel = nullptr;
+    lv_obj_t* rowMega2Value = nullptr;
+    lv_obj_t* rowMega2ValueLabel = nullptr;
+    lv_obj_t* rowSafetyValue = nullptr;
+    lv_obj_t* rowSafetyValueLabel = nullptr;
+    lv_obj_t* rowWarningValue = nullptr;
+    lv_obj_t* rowWarningValueLabel = nullptr;
+    lv_obj_t* rowPowerValue = nullptr;
+    lv_obj_t* rowPowerValueLabel = nullptr;
+    lv_obj_t* rowModeValue = nullptr;
+    lv_obj_t* rowModeValueLabel = nullptr;
+    lv_obj_t* rowWsDiagValue = nullptr;
+    lv_obj_t* rowWsDiagValueLabel = nullptr;
+
     lv_obj_t* statusLabel = nullptr;
     lv_obj_t* detailLabel = nullptr;
     lv_obj_t* defectRow = nullptr;
@@ -200,6 +243,14 @@ static void hmiUiUpdate();
 static void updateDebugOverlay();
 static void hmiUiSetPill(lv_obj_t* pill, lv_obj_t* label, const char* text, lv_color_t bg);
 static void hmiUiSetActionButtonColor(lv_obj_t* btn, lv_color_t bg);
+static lv_obj_t* hmiUiCreatePanel(lv_obj_t* parent, const char* title, lv_coord_t width);
+static void hmiUiCreateStatusRow(
+    lv_obj_t* parent,
+    const char* leftText,
+    lv_obj_t** outValueCell,
+    lv_obj_t** outValueLabel
+);
+static void hmiUiSetStatusCell(lv_obj_t* cell, lv_obj_t* label, const char* text, lv_color_t bg);
 static void hmiUiBuildStatusTexts(
     char* systemBuf, size_t systemBufSize,
     char* ethBuf, size_t ethBufSize,
@@ -1076,15 +1127,15 @@ static void hmiRetryOverlayUpdate() {
                                (g_dbg.startupM2SelftestRunning || g_pendingM2Retry);
 
     if (showM2Running) {
-        lv_label_set_text(g_ui.retryTitle, "SBHF Weichentest läuft");
+        lv_label_set_text(g_ui.retryTitle, "SBHF Weichentest laeuft");
     } else {
-        lv_label_set_text(g_ui.retryTitle, "Mega1 Weichentest läuft");
+        lv_label_set_text(g_ui.retryTitle, "Mega1 Weichentest laeuft");
     }
 
     lv_label_set_text(
         g_ui.retryText,
         "Bitte warten ...\n"
-        "Der Selbsttest läuft im Hintergrund\n"
+        "Der Selbsttest laeuft im Hintergrund\n"
         "und wird automatisch abgeschlossen."
     );
 
@@ -1112,6 +1163,8 @@ static void hmiUiUpdate() {
     const bool canPowerOff = hmiCanSendPowerOffNow();
     const bool canAuto = hmiCanSendAutoNow();
     const bool canManual = hmiCanSendManualNow();
+    const bool canWrite = g_dbg.actionCanWrite;
+    const bool diagLease = g_dbg.diagActive;
     const bool autoIsEnabled = g_dbg.mega1ModeAuto ? canManual : canAuto;
 
     char systemBuf[64];
@@ -1124,6 +1177,18 @@ static void hmiUiUpdate() {
     bool systemWarn = false;
     bool m1Warn = false;
     bool m2Warn = false;
+    
+    char safetyValue[40];
+    char warningValue[20];
+    char wsDiagValue[48];
+    char lockValue[96];
+    char ethValue[64];
+    char trafoABuf[40];
+    char trafoBBuf[40];
+    char m2DefectBuf[96];
+    char m1DefectBuf[96];
+
+    const bool safetyWarn = g_dbg.safetyLock || g_dbg.safetyAckRequired || g_dbg.safetyNotausActive;
 
     hmiUiBuildStatusTexts(
         systemBuf, sizeof(systemBuf),
@@ -1136,22 +1201,74 @@ static void hmiUiUpdate() {
         &systemWarn, &m1Warn, &m2Warn
     );
 
-    hmiUiSetPill(g_ui.pillSystem, g_ui.pillSystemLabel, systemBuf,
-                 systemWarn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN));
-    hmiUiSetPill(g_ui.pillEth, g_ui.pillEthLabel, ethBuf,
+    const bool showM2Defect = hmiHasMega2Defects();
+    const bool showM1Defect = hmiHasMega1Defects();
+    const bool warningActive = g_dbg.summaryWarningPresent || showM1Defect || showM2Defect || safetyWarn || m1Warn || m2Warn;
+
+    if (g_dbg.safetyNotausActive) {
+        snprintf(safetyValue, sizeof(safetyValue), "NOT-AUS");
+    } else if (g_dbg.safetyAckRequired) {
+        snprintf(safetyValue, sizeof(safetyValue), "ACK");
+    } else if (g_dbg.safetyLock) {
+        snprintf(safetyValue, sizeof(safetyValue), "LOCK");
+    } else {
+        snprintf(safetyValue, sizeof(safetyValue), "OK");
+    }
+    snprintf(warningValue, sizeof(warningValue), "%s", warningActive ? "AKTIV" : "AUS");
+    snprintf(wsDiagValue, sizeof(wsDiagValue), "%lu / %s",
+             (unsigned long)g_dbg.wsClients,
+             diagLease ? "LEASE" : "FREI");
+    if (canWrite) {
+        snprintf(lockValue, sizeof(lockValue), "Bedienung frei");
+    } else if (diagLease && g_dbg.diagOwner[0] && strcmp(g_dbg.diagOwner, "-") != 0) {
+        snprintf(lockValue, sizeof(lockValue), "Bedienung gesperrt (Diag: %s)", g_dbg.diagOwner);
+    } else if (diagLease) {
+        snprintf(lockValue, sizeof(lockValue), "Bedienung gesperrt (Diag-Lease)");
+    } else {
+        snprintf(lockValue, sizeof(lockValue), "Bedienung gesperrt");
+    }
+
+    if (g_dbg.ethConnected) {
+        if (g_dbg.ethIp[0] != '\0' && strcmp(g_dbg.ethIp, "-") != 0) {
+            snprintf(ethValue, sizeof(ethValue), "%s", g_dbg.ethIp);
+        } else {
+            snprintf(ethValue, sizeof(ethValue), "-");
+        }
+    } else {
+        snprintf(ethValue, sizeof(ethValue), "OFFLINE");
+    }
+
+    snprintf(trafoABuf, sizeof(trafoABuf), "Trafo oben: %u", (unsigned)g_dbg.analogVA10);
+    snprintf(trafoBBuf, sizeof(trafoBBuf), "Trafo unten: %u", (unsigned)g_dbg.analogVB10);
+    snprintf(m2DefectBuf, sizeof(m2DefectBuf), showM2Defect ? "SBHF: %s" : "SBHF: Keine Defekte", g_dbg.mega2DefectList);
+    snprintf(m1DefectBuf, sizeof(m1DefectBuf), showM1Defect ? "Mega1: %s" : "Mega1: Keine Defekte", g_dbg.mega1DefectList);
+
+    hmiUiSetStatusCell(g_ui.rowEthValue, g_ui.rowEthValueLabel,
+                 ethValue,
                  g_dbg.ethConnected ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED));
-    hmiUiSetPill(g_ui.pillWs, g_ui.pillWsLabel, wsBuf,
-                 (g_dbg.wsClients > 0) ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED));
-    hmiUiSetPill(g_ui.pillMega1, g_ui.pillMega1Label, m1Buf,
+    hmiUiSetStatusCell(g_ui.rowMega1Value, g_ui.rowMega1ValueLabel,
+                 !g_dbg.mega1Online ? "OFFLINE" : (m1Warn ? "WARNUNG" : "ONLINE"),
                  !g_dbg.mega1Online ? lv_palette_main(LV_PALETTE_RED)
                                     : (m1Warn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN)));
-    hmiUiSetPill(g_ui.pillMega2, g_ui.pillMega2Label, m2Buf,
+    hmiUiSetStatusCell(g_ui.rowMega2Value, g_ui.rowMega2ValueLabel,
+                 !g_dbg.mega2Online ? "OFFLINE" : (m2Warn ? "WARNUNG" : "ONLINE"),
                  !g_dbg.mega2Online ? lv_palette_main(LV_PALETTE_RED)
                                     : (m2Warn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN)));
-    hmiUiSetPill(g_ui.pillMode, g_ui.pillModeLabel, modeBuf,
-                 g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_BLUE));
-    hmiUiSetPill(g_ui.pillPower, g_ui.pillPowerLabel, powerBuf,
+    hmiUiSetStatusCell(g_ui.rowSafetyValue, g_ui.rowSafetyValueLabel,
+                 safetyValue,
+                 safetyWarn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN));
+    hmiUiSetStatusCell(g_ui.rowWarningValue, g_ui.rowWarningValueLabel,
+                 warningValue,
+                 warningActive ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_darken(LV_PALETTE_GREY, 2));
+    hmiUiSetStatusCell(g_ui.rowPowerValue, g_ui.rowPowerValueLabel,
+                 g_dbg.safetyPowerOn ? "AN" : "AUS",
                  g_dbg.safetyPowerOn ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_darken(LV_PALETTE_GREY, 2));
+    hmiUiSetStatusCell(g_ui.rowModeValue, g_ui.rowModeValueLabel,
+                 g_dbg.mega1ModeAuto ? "AUTO" : "MANUELL",
+                 g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_BLUE));
+    hmiUiSetStatusCell(g_ui.rowWsDiagValue, g_ui.rowWsDiagValueLabel,
+                 wsDiagValue,
+                 (g_dbg.wsClients > 0) ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_darken(LV_PALETTE_GREY, 2));
 
     hmiUiSetButtonEnabled(
         g_ui.powerBtn,
@@ -1178,31 +1295,35 @@ static void hmiUiUpdate() {
         g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_BLUE)
                             : lv_palette_main(LV_PALETTE_GREEN));
 
-    const bool showM2Defect = hmiHasMega2Defects();
-    const bool showM1Defect = hmiHasMega1Defects();
-    const bool showDefectRow = showM1Defect || showM2Defect;
-
-    char detailBuf[192];
-    detailBuf[0] = '\0';
-    if (showM2Defect) {
-        snprintf(detailBuf + strlen(detailBuf), sizeof(detailBuf) - strlen(detailBuf),
-                 "SBHF Defekt: %s", g_dbg.mega2DefectList);
+    if (g_ui.lockLabel) {
+        lv_label_set_text(g_ui.lockLabel, lockValue);
+        lv_obj_set_style_text_color(
+            g_ui.lockLabel,
+            canWrite ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_ORANGE),
+            0
+        );
     }
-    if (showM1Defect) {
-        if (detailBuf[0] != '\0') {
-            strncat(detailBuf, "\n", sizeof(detailBuf) - strlen(detailBuf) - 1);
-        }
-        snprintf(detailBuf + strlen(detailBuf), sizeof(detailBuf) - strlen(detailBuf),
-                 "Mega1 Defekt: %s", g_dbg.mega1DefectList);
+    if (g_ui.m1DefectLabel) {
+        lv_label_set_text(g_ui.m1DefectLabel, m1DefectBuf);
+    }
+    if (g_ui.m2DefectLabel) {
+        lv_label_set_text(g_ui.m2DefectLabel, m2DefectBuf);
     }
 
-    lv_label_set_text(g_ui.detailLabel, detailBuf);
-    if (showDefectRow) {
-        lv_obj_clear_flag(g_ui.detailLabel, LV_OBJ_FLAG_HIDDEN);
+    if (g_ui.detailLabel) {
+        lv_label_set_text(g_ui.detailLabel, "");
+    }
+
+    if (g_ui.defectPanel) {
+        lv_obj_clear_flag(g_ui.defectPanel, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if ((showM1Defect || showM2Defect) && g_ui.defectRow) {
         lv_obj_clear_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
     } else {
-        lv_obj_add_flag(g_ui.detailLabel, LV_OBJ_FLAG_HIDDEN);
-        lv_obj_add_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
+        if (g_ui.defectRow) {
+            lv_obj_add_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
+        }
     }
 
     hmiUiSetButtonEnabled(
@@ -1220,13 +1341,22 @@ static void hmiUiUpdate() {
     hmiUiSetActionButtonColor(g_ui.m2RetryBtn, lv_palette_main(LV_PALETTE_ORANGE));
     hmiUiSetActionButtonColor(g_ui.m1RetryBtn, lv_palette_main(LV_PALETTE_ORANGE));                            
 
+
+    if (g_ui.trafoLabelA) {
+        lv_label_set_text(g_ui.trafoLabelA, trafoABuf);
+    }
+    if (g_ui.trafoLabelB) {
+        lv_label_set_text(g_ui.trafoLabelB, trafoBBuf);
+    }
+
+
     hmiStartupOverlayUpdate();
     hmiRetryOverlayUpdate();
 }
 
 static lv_obj_t* hmiUiCreateActionButton(lv_obj_t* parent, lv_obj_t** outLabel, const char* text) {
     lv_obj_t* btn = lv_btn_create(parent);
-    lv_obj_set_height(btn, 56);
+    lv_obj_set_height(btn, 48);
     lv_obj_set_style_radius(btn, 10, 0);
     lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
 
@@ -1281,6 +1411,79 @@ static void hmiUiSetPill(lv_obj_t* pill, lv_obj_t* label, const char* text, lv_c
     lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
     lv_obj_set_style_border_width(pill, 0, 0);
     lv_obj_set_style_text_color(pill, lv_color_white(), 0);
+}
+
+static lv_obj_t* hmiUiCreatePanel(lv_obj_t* parent, const char* title, lv_coord_t width) {
+    lv_obj_t* panel = lv_obj_create(parent);
+    lv_obj_set_width(panel, width);
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
+    lv_obj_set_style_radius(panel, 10, 0);
+    lv_obj_set_style_bg_color(panel, lv_palette_darken(LV_PALETTE_GREY, 4), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_border_color(panel, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
+    lv_obj_set_style_pad_all(panel, 10, 0);
+    lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(panel, 8, 0);
+
+    if (title && *title) {
+        lv_obj_t* label = lv_label_create(panel);
+        lv_label_set_text(label, title);
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    }
+    return panel;
+}
+
+static void hmiUiCreateStatusRow(
+    lv_obj_t* parent,
+    const char* leftText,
+    lv_obj_t** outValueCell,
+    lv_obj_t** outValueLabel
+) {
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_set_width(row, lv_pct(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 8, 0);
+
+    lv_obj_t* left = lv_obj_create(row);
+    lv_obj_set_size(left, 120, 38);
+    lv_obj_set_style_radius(left, 6, 0);
+    lv_obj_set_style_bg_color(left, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
+    lv_obj_set_style_bg_opa(left, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(left, 0, 0);
+    lv_obj_t* leftLabel = lv_label_create(left);
+    lv_label_set_text(leftLabel, leftText ? leftText : "-");
+    lv_obj_center(leftLabel);
+
+    lv_obj_t* right = lv_obj_create(row);
+    lv_obj_set_flex_grow(right, 1);
+    lv_obj_set_height(right, 38);
+    lv_obj_set_style_radius(right, 6, 0);
+    lv_obj_set_style_border_width(right, 0, 0);
+    lv_obj_t* rightLabel = lv_label_create(right);
+    lv_label_set_text(rightLabel, "-");
+    lv_obj_center(rightLabel);
+
+    if (outValueCell) *outValueCell = right;
+    if (outValueLabel) *outValueLabel = rightLabel;
+}
+
+static void hmiUiSetStatusCell(lv_obj_t* cell, lv_obj_t* label, const char* text, lv_color_t bg) {
+    if (!cell) return;
+    if (label) {
+        lv_label_set_text(label, text ? text : "-");
+    }
+    lv_obj_set_style_bg_color(cell, bg, 0);
+    lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(cell, lv_color_white(), 0);
 }
 
 static void hmiUiSetActionButtonColor(lv_obj_t* btn, lv_color_t bg) {
@@ -1341,116 +1544,154 @@ static void createMainUi() {
     lv_obj_set_layout(g_ui.root, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(g_ui.root, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(g_ui.root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.root, 10, 0);
 
-    lv_obj_t* title = lv_label_create(g_ui.root);
-    lv_label_set_text(title, "Elektrische Eisenbahn HMI");
-    lv_obj_set_style_text_font(title, &lv_font_montserrat_26, 0);
-    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    g_ui.title = lv_label_create(g_ui.root);
+    lv_label_set_text(g_ui.title, "Elektrische Eisenbahn HMI");
+    lv_obj_set_style_text_font(g_ui.title, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(g_ui.title, lv_color_white(), 0);
 
-    g_ui.pillRowTop = lv_obj_create(g_ui.root);
-    lv_obj_set_width(g_ui.pillRowTop, lv_pct(100));
-    lv_obj_set_height(g_ui.pillRowTop, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(g_ui.pillRowTop, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.pillRowTop, 0, 0);
-    lv_obj_set_style_pad_left(g_ui.pillRowTop, 0, 0);
-    lv_obj_set_style_pad_right(g_ui.pillRowTop, 0, 0);
-    lv_obj_set_style_pad_top(g_ui.pillRowTop, 8, 0);
-    lv_obj_set_style_pad_bottom(g_ui.pillRowTop, 0, 0);
-    lv_obj_set_layout(g_ui.pillRowTop, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.pillRowTop, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(g_ui.pillRowTop, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(g_ui.pillRowTop, 8, 0);
-    lv_obj_set_style_pad_column(g_ui.pillRowTop, 10, 0);
+    lv_obj_t* split = lv_obj_create(g_ui.root);
+    lv_obj_set_width(split, lv_pct(100));
+    lv_obj_set_flex_grow(split, 1);
+    lv_obj_set_style_bg_opa(split, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(split, 0, 0);
+    lv_obj_set_style_pad_all(split, 0, 0);
+    lv_obj_set_layout(split, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(split, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(split, 8, 0);
 
-    g_ui.pillSystem = hmiUiCreateInfoPill(g_ui.pillRowTop, &g_ui.pillSystemLabel, "System: -");
-    g_ui.pillEth    = hmiUiCreateInfoPill(g_ui.pillRowTop, &g_ui.pillEthLabel,    "ETH: -");
-    g_ui.pillWs     = hmiUiCreateInfoPill(g_ui.pillRowTop, &g_ui.pillWsLabel,     "WS: -");
+    g_ui.leftPane = lv_obj_create(split);
+    lv_obj_set_width(g_ui.leftPane, lv_pct(68));
+    lv_obj_set_flex_grow(g_ui.leftPane, 1);
+    lv_obj_set_height(g_ui.leftPane, lv_pct(100));
+    lv_obj_set_style_bg_opa(g_ui.leftPane, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.leftPane, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.leftPane, 0, 0);
+    lv_obj_set_layout(g_ui.leftPane, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.leftPane, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.leftPane, 6, 0);
 
-    g_ui.pillRowBottom = lv_obj_create(g_ui.root);
-    lv_obj_set_width(g_ui.pillRowBottom, lv_pct(100));
-    lv_obj_set_height(g_ui.pillRowBottom, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(g_ui.pillRowBottom, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.pillRowBottom, 0, 0);
-    lv_obj_set_style_pad_left(g_ui.pillRowBottom, 0, 0);
-    lv_obj_set_style_pad_right(g_ui.pillRowBottom, 0, 0);
-    lv_obj_set_style_pad_top(g_ui.pillRowBottom, 8, 0);
-    lv_obj_set_style_pad_bottom(g_ui.pillRowBottom, 0, 0);
-    lv_obj_set_layout(g_ui.pillRowBottom, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.pillRowBottom, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(g_ui.pillRowBottom, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(g_ui.pillRowBottom, 8, 0);
-    lv_obj_set_style_pad_column(g_ui.pillRowBottom, 10, 0);
+    g_ui.mainContent = lv_obj_create(g_ui.leftPane);
+    lv_obj_set_width(g_ui.mainContent, lv_pct(100));
+    lv_obj_set_flex_grow(g_ui.mainContent, 1);
+    lv_obj_set_style_bg_color(g_ui.mainContent, lv_palette_darken(LV_PALETTE_GREY, 4), 0);
+    lv_obj_set_style_bg_opa(g_ui.mainContent, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(g_ui.mainContent, 1, 0);
+    lv_obj_set_style_border_color(g_ui.mainContent, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
+    lv_obj_set_style_radius(g_ui.mainContent, 8, 0);
+    lv_obj_set_style_pad_all(g_ui.mainContent, 10, 0);
+    lv_obj_set_layout(g_ui.mainContent, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.mainContent, LV_FLEX_FLOW_COLUMN);
 
-    g_ui.pillMega1 = hmiUiCreateInfoPill(g_ui.pillRowBottom, &g_ui.pillMega1Label, "Mega1: -");
-    g_ui.pillMega2 = hmiUiCreateInfoPill(g_ui.pillRowBottom, &g_ui.pillMega2Label, "Mega2: -");
-    g_ui.pillMode  = hmiUiCreateInfoPill(g_ui.pillRowBottom, &g_ui.pillModeLabel,  "Modus: -");
-    g_ui.pillPower = hmiUiCreateInfoPill(g_ui.pillRowBottom, &g_ui.pillPowerLabel, "Power: -");
+    lv_obj_t* mainText = lv_label_create(g_ui.mainContent);
+    lv_label_set_text(mainText,
+        "Hauptflaeche\n"
+        "\n"
+        "Hier bleibt Platz fuer spaetere Betriebsdarstellung,\n"
+        "Bloecke, Weichen, Bahnhofs- und weitere Statusinfos.");
+    lv_obj_set_style_text_font(mainText, &lv_font_montserrat_14, 0);
+    lv_label_set_long_mode(mainText, LV_LABEL_LONG_WRAP);
+    lv_obj_set_width(mainText, lv_pct(100));
 
-    g_ui.statusLabel = lv_label_create(g_ui.root);
-    lv_obj_set_width(g_ui.statusLabel, lv_pct(100));
-    lv_label_set_long_mode(g_ui.statusLabel, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(g_ui.statusLabel, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.statusLabel, lv_color_white(), 0);
-    lv_obj_add_flag(g_ui.statusLabel, LV_OBJ_FLAG_HIDDEN);
+    g_ui.rightPane = lv_obj_create(split);
+    lv_obj_set_width(g_ui.rightPane, lv_pct(32));
+    lv_obj_set_height(g_ui.rightPane, lv_pct(100));
+    lv_obj_set_style_bg_opa(g_ui.rightPane, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.rightPane, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.rightPane, 0, 0);
+    lv_obj_set_layout(g_ui.rightPane, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.rightPane, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.rightPane, 8, 0);
 
-    g_ui.detailLabel = lv_label_create(g_ui.root);
-    lv_obj_set_width(g_ui.detailLabel, lv_pct(100));
-    lv_label_set_long_mode(g_ui.detailLabel, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(g_ui.detailLabel, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.detailLabel, lv_color_white(), 0);
-    lv_label_set_text(g_ui.detailLabel, "");
+    g_ui.actionPanel = hmiUiCreatePanel(g_ui.rightPane, "Aktionen", lv_pct(100));
+    g_ui.powerBtn = hmiUiCreateActionButton(g_ui.actionPanel, &g_ui.powerBtnLabel, "POWER ON");
+    lv_obj_set_width(g_ui.powerBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.powerBtn, hmiUiOnPowerClicked, LV_EVENT_CLICKED, nullptr);
 
-    g_ui.defectRow = lv_obj_create(g_ui.root);
+    g_ui.powerOffBtn = hmiUiCreateActionButton(g_ui.actionPanel, &g_ui.powerOffBtnLabel, "STOP / POWER OFF");
+    lv_obj_set_width(g_ui.powerOffBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.powerOffBtn, hmiUiOnPowerOffClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.autoBtn = hmiUiCreateActionButton(g_ui.actionPanel, &g_ui.autoBtnLabel, "AUTO");
+    lv_obj_set_width(g_ui.autoBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.autoBtn, hmiUiOnAutoClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.lockPanel = hmiUiCreatePanel(g_ui.rightPane, "Schreibrechte", lv_pct(100));
+    g_ui.lockLabel = lv_label_create(g_ui.lockPanel);
+    lv_label_set_text(g_ui.lockLabel, "Bedienung: -");
+    lv_obj_set_width(g_ui.lockLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.lockLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.lockLabel, &lv_font_montserrat_16, 0);
+
+    g_ui.systemPanel = hmiUiCreatePanel(g_ui.rightPane, "Systemstatus", lv_pct(100));
+    hmiUiCreateStatusRow(g_ui.systemPanel, "ETH",     &g_ui.rowEthValue,    &g_ui.rowEthValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Mega1",   &g_ui.rowMega1Value,  &g_ui.rowMega1ValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Mega2",   &g_ui.rowMega2Value,  &g_ui.rowMega2ValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Safety",  &g_ui.rowSafetyValue, &g_ui.rowSafetyValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Warning", &g_ui.rowWarningValue,&g_ui.rowWarningValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Power",   &g_ui.rowPowerValue,  &g_ui.rowPowerValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Modus",   &g_ui.rowModeValue,   &g_ui.rowModeValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "WS/Diag", &g_ui.rowWsDiagValue, &g_ui.rowWsDiagValueLabel);
+
+    g_ui.defectPanel = hmiUiCreatePanel(g_ui.rightPane, "Defekte", lv_pct(100));
+    g_ui.m1DefectLabel = lv_label_create(g_ui.defectPanel);
+    lv_obj_set_width(g_ui.m1DefectLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.m1DefectLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.m1DefectLabel, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(g_ui.m1DefectLabel, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.m1DefectLabel, LV_OPA_COVER, 0);
+    lv_label_set_text(g_ui.m1DefectLabel, "Mega1: Keine Defekte");
+
+    g_ui.m2DefectLabel = lv_label_create(g_ui.defectPanel);
+    lv_obj_set_width(g_ui.m2DefectLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.m2DefectLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.m2DefectLabel, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(g_ui.m2DefectLabel, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.m2DefectLabel, LV_OPA_COVER, 0);
+    lv_label_set_text(g_ui.m2DefectLabel, "SBHF: Keine Defekte");
+
+    g_ui.defectRow = lv_obj_create(g_ui.defectPanel);
     lv_obj_set_width(g_ui.defectRow, lv_pct(100));
     lv_obj_set_height(g_ui.defectRow, LV_SIZE_CONTENT);
     lv_obj_set_style_bg_opa(g_ui.defectRow, LV_OPA_TRANSP, 0);
     lv_obj_set_style_border_width(g_ui.defectRow, 0, 0);
-    lv_obj_set_style_pad_left(g_ui.defectRow, 0, 0);
-    lv_obj_set_style_pad_right(g_ui.defectRow, 0, 0);
-    lv_obj_set_style_pad_top(g_ui.defectRow, 6, 0);
-    lv_obj_set_style_pad_bottom(g_ui.defectRow, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.defectRow, 0, 0);
     lv_obj_set_layout(g_ui.defectRow, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.defectRow, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(g_ui.defectRow, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_flex_flow(g_ui.defectRow, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_style_pad_row(g_ui.defectRow, 8, 0);
     lv_obj_set_style_pad_column(g_ui.defectRow, 12, 0);
 
-    g_ui.m2RetryBtn = hmiUiCreateActionButton(g_ui.defectRow, &g_ui.m2RetryBtnLabel, "SBHF RETRY");
-    lv_obj_set_width(g_ui.m2RetryBtn, 170);
-    lv_obj_add_event_cb(g_ui.m2RetryBtn, hmiUiOnM2RetryClicked, LV_EVENT_CLICKED, nullptr);
-
     g_ui.m1RetryBtn = hmiUiCreateActionButton(g_ui.defectRow, &g_ui.m1RetryBtnLabel, "MEGA1 RETRY");
-    lv_obj_set_width(g_ui.m1RetryBtn, 185);
+    lv_obj_set_width(g_ui.m1RetryBtn, lv_pct(100));
     lv_obj_add_event_cb(g_ui.m1RetryBtn, hmiUiOnM1RetryClicked, LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_add_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
+    g_ui.m2RetryBtn = hmiUiCreateActionButton(g_ui.defectRow, &g_ui.m2RetryBtnLabel, "SBHF RETRY");
+    lv_obj_set_width(g_ui.m2RetryBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.m2RetryBtn, hmiUiOnM2RetryClicked, LV_EVENT_CLICKED, nullptr);
 
-    lv_obj_t* btnRowBottom = lv_obj_create(g_ui.root);
-    lv_obj_set_width(btnRowBottom, lv_pct(100));
-    lv_obj_set_height(btnRowBottom, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(btnRowBottom, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(btnRowBottom, 0, 0);
-    lv_obj_set_style_pad_left(btnRowBottom, 0, 0);
-    lv_obj_set_style_pad_right(btnRowBottom, 0, 0);
-    lv_obj_set_style_pad_top(btnRowBottom, 8, 0);
-    lv_obj_set_style_pad_bottom(btnRowBottom, 0, 0);
-    lv_obj_set_layout(btnRowBottom, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(btnRowBottom, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(btnRowBottom, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(btnRowBottom, 8, 0);
-    lv_obj_set_style_pad_column(btnRowBottom, 12, 0);
+    g_ui.trafoPanel = hmiUiCreatePanel(g_ui.rightPane, "Trafo", lv_pct(100));
+    g_ui.trafoLabelA = lv_label_create(g_ui.trafoPanel);
+    lv_obj_set_style_text_font(g_ui.trafoLabelA, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(g_ui.trafoLabelA, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.trafoLabelA, LV_OPA_COVER, 0);
+    lv_obj_set_width(g_ui.trafoLabelA, lv_pct(100));
+    lv_label_set_long_mode(g_ui.trafoLabelA, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(g_ui.trafoLabelA, "Trafo A10: -");
 
-    g_ui.powerBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.powerBtnLabel, "POWER ON");
-    lv_obj_set_width(g_ui.powerBtn, 160);
-    lv_obj_add_event_cb(g_ui.powerBtn, hmiUiOnPowerClicked, LV_EVENT_CLICKED, nullptr);
+    g_ui.trafoLabelB = lv_label_create(g_ui.trafoPanel);
+    lv_obj_set_style_text_font(g_ui.trafoLabelB, &lv_font_montserrat_14, 0);
+    lv_obj_set_style_text_color(g_ui.trafoLabelB, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.trafoLabelB, LV_OPA_COVER, 0);
+    lv_obj_set_width(g_ui.trafoLabelB, lv_pct(100));
+    lv_label_set_long_mode(g_ui.trafoLabelB, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(g_ui.trafoLabelB, "Trafo B10: -");
 
-    g_ui.powerOffBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.powerOffBtnLabel, "STOP / POWER OFF");
-    lv_obj_set_width(g_ui.powerOffBtn, 220);
-    lv_obj_add_event_cb(g_ui.powerOffBtn, hmiUiOnPowerOffClicked, LV_EVENT_CLICKED, nullptr);
-
-    g_ui.autoBtn = hmiUiCreateActionButton(btnRowBottom, &g_ui.autoBtnLabel, "AUTO");
-    lv_obj_set_width(g_ui.autoBtn, 140);
-    lv_obj_add_event_cb(g_ui.autoBtn, hmiUiOnAutoClicked, LV_EVENT_CLICKED, nullptr);
+    // alte Widgets bewusst versteckt / ungenutzt lassen
+    g_ui.statusLabel = lv_label_create(g_ui.leftPane);
+    lv_obj_add_flag(g_ui.statusLabel, LV_OBJ_FLAG_HIDDEN);
+    g_ui.detailLabel = lv_label_create(g_ui.leftPane);
+    lv_obj_add_flag(g_ui.detailLabel, LV_OBJ_FLAG_HIDDEN);
 
     g_ui.startupOverlay = lv_obj_create(screen);
     lv_obj_set_size(g_ui.startupOverlay, lv_pct(100), lv_pct(100));
@@ -1984,8 +2225,8 @@ static void hmiOnDebugToggle(lv_event_t* e) {
 
 static void createDebugOverlay() {
     g_debugToggleBtn = lv_btn_create(lv_scr_act());
-    lv_obj_set_size(g_debugToggleBtn, 140, 44);
-    lv_obj_align(g_debugToggleBtn, LV_ALIGN_TOP_RIGHT, -8, 8);
+    lv_obj_set_size(g_debugToggleBtn, 120, 38);
+    lv_obj_align(g_debugToggleBtn, LV_ALIGN_TOP_LEFT, 8, 52);
     lv_obj_add_event_cb(g_debugToggleBtn, hmiOnDebugToggle, LV_EVENT_CLICKED, nullptr);
 
     g_debugToggleLabel = lv_label_create(g_debugToggleBtn);
@@ -2000,18 +2241,18 @@ static void createDebugOverlay() {
         lv_obj_set_style_bg_opa(lbl, LV_OPA_70, 0);
         lv_obj_set_style_bg_color(lbl, lv_color_black(), 0);
         lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_pad_left(lbl, 8, 0);
-        lv_obj_set_style_pad_right(lbl, 8, 0);
-        lv_obj_set_style_pad_top(lbl, 6, 0);
-        lv_obj_set_style_pad_bottom(lbl, 6, 0);
+        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_14, 0);
+        lv_obj_set_style_pad_left(lbl, 6, 0);
+        lv_obj_set_style_pad_right(lbl, 6, 0);
+        lv_obj_set_style_pad_top(lbl, 4, 0);
+        lv_obj_set_style_pad_bottom(lbl, 4, 0);
         lv_obj_set_style_radius(lbl, 6, 0);
         lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
-        lv_obj_set_width(lbl, 208);
+        lv_obj_set_width(lbl, 192);
     }
 
-    lv_obj_align(g_debugLabelLeft, LV_ALIGN_TOP_RIGHT, -232, 60);
-    lv_obj_align(g_debugLabelRight, LV_ALIGN_TOP_RIGHT, -8, 60);
+    lv_obj_align(g_debugLabelLeft, LV_ALIGN_TOP_LEFT, 8, 104);
+    lv_obj_align(g_debugLabelRight, LV_ALIGN_TOP_LEFT, 232, 104);
 
     lv_label_set_text(
         g_debugLabelLeft,
@@ -2417,6 +2658,11 @@ void loop() {
         ((uint32_t)(now - g_stateUiPendingSinceMs) >= HMI_STATE_UI_COALESCE_MS)) {
         g_uiDirty = true;
         g_stateUiPending = false;
+    }
+
+    if (g_analogDirty) {
+        g_uiDirty = true;
+        g_analogDirty = false;
     }
 
     const bool uiDue = g_uiDirty;
