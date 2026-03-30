@@ -80,6 +80,8 @@ struct HmiDebugState {
     bool mega1SelftestRetryAvailable = false;
     bool mega2SelftestRetryAvailable = false;
     uint8_t mega1BahnhofMask = 0;
+    uint16_t mega1WeicheIstGeradeBits = 0;
+    uint16_t mega1WeicheSollGeradeBits = 0;
     bool uiStartupOverlayActive = false;
     bool uiM1RetryOverlayActive = false;
     bool uiM2RetryOverlayActive = false;
@@ -110,6 +112,20 @@ struct HmiUi {
     lv_obj_t* leftPane = nullptr;
     lv_obj_t* rightPane = nullptr;
     lv_obj_t* mainContent = nullptr;
+    lv_obj_t* bahnhofPanel = nullptr;
+    lv_obj_t* bahnhofGrid = nullptr;
+    lv_obj_t* bahnhofItem[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* bahnhofStateCell[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* bahnhofLedGreen[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* bahnhofLedRed[4]   = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* bahnhofToggleBtn[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* bahnhofToggleBtnLabel[4] = {nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* weichePanel = nullptr;
+    lv_obj_t* weicheGrid = nullptr;
+    lv_obj_t* weicheTile[12] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* weicheSymbolBg[12] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* weicheSymbolFg[12] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
+    lv_obj_t* weicheSollLabel[12] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
 
     // right panels
     lv_obj_t* actionPanel = nullptr;
@@ -242,6 +258,7 @@ static uint16_t g_rxExpectedLen = 0;
 static void hmiUiUpdate();
 static void updateDebugOverlay();
 static void hmiUiSetPill(lv_obj_t* pill, lv_obj_t* label, const char* text, lv_color_t bg);
+static lv_obj_t* hmiUiCreateActionButton(lv_obj_t* parent, lv_obj_t** outLabel, const char* text);
 static void hmiUiSetActionButtonColor(lv_obj_t* btn, lv_color_t bg);
 static lv_obj_t* hmiUiCreatePanel(lv_obj_t* parent, const char* title, lv_coord_t width);
 static void hmiUiCreateStatusRow(
@@ -274,6 +291,28 @@ static void hmiUiOnPowerClicked(lv_event_t* e);
 static void hmiUiOnPowerOffClicked(lv_event_t* e);
 static void hmiUiOnRetryCloseClicked(lv_event_t* e);
 static void hmiUiOnAutoClicked(lv_event_t* e);
+static void hmiUiOnBhfToggleClicked(lv_event_t* e);
+static bool hmiCanSendBhfPowerNow();
+static bool hmiSendM1PowerSet(uint8_t bhf, bool on);
+static void hmiUiCreateBahnhofItem(
+    lv_obj_t* parent,
+    lv_obj_t** outItem,
+    const char* leftText,
+    lv_obj_t** outStateCell,
+    lv_obj_t** outLedGreen,
+    lv_obj_t** outLedRed,
+    lv_obj_t** outToggleBtn,
+    lv_obj_t** outToggleBtnLabel,
+    uint8_t bhfIndex
+);
+static void hmiUiCreateWeicheTile(
+    lv_obj_t* parent,
+    uint8_t idx,
+    lv_obj_t** outTile,
+    lv_obj_t** outSymbolBg,
+    lv_obj_t** outSymbolFg,
+    lv_obj_t** outSollLabel
+);
 static void frameParserReset();
 static void frameParserCommitPayload();
 static void frameParserCheckTimeout(uint32_t nowMs);
@@ -914,6 +953,78 @@ static void hmiUiOnAutoClicked(lv_event_t* e) {
     hmiUiAfterTxAttempt();
 }
 
+static bool hmiCanSendBhfPowerNow() {
+    return g_dbg.actionCanWrite &&
+           g_dbg.mega1Online &&
+           g_dbg.systemReady &&
+           (!g_dbg.safetyLock) &&
+           (!g_dbg.safetyNotausActive);
+}
+
+static bool hmiSendM1PowerSet(uint8_t bhf, bool on) {
+    if (bhf >= 4u) {
+        g_dbg.txErr++;
+        hmiTxSetLast("bad-bhf");
+        return false;
+    }
+
+    char line[128];
+    const int len = snprintf(
+        line,
+        sizeof(line),
+        "{\"type\":\"action\",\"action\":\"m1PowerSet\",\"bhf\":%u,\"on\":%s}",
+        (unsigned)bhf,
+        on ? "true" : "false"
+    );
+
+    if (len <= 0 || (size_t)len >= sizeof(line)) {
+        g_dbg.txErr++;
+        hmiTxSetLast("fmt-err");
+        return false;
+    }
+
+    size_t written = 0;
+    written += Serial0.write((const uint8_t*)line, (size_t)len);
+    written += Serial0.write((uint8_t)'\n');
+    Serial0.flush();
+
+    if (written != (size_t)len + 1U) {
+        g_dbg.txErr++;
+        hmiTxSetLast("uart-err");
+        return false;
+    }
+
+    g_dbg.txFrames++;
+    hmiTxSetLast("m1PowerSet");
+    return true;
+}
+
+static void hmiUiOnBhfToggleClicked(lv_event_t* e) {
+    if (!e) {
+        return;
+    }
+
+    const uintptr_t raw = (uintptr_t)lv_event_get_user_data(e);
+    const uint8_t bhf = (uint8_t)raw;
+    if (bhf >= 4u) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-bhf");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    if (!hmiCanSendBhfPowerNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-bhf");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    const bool isOn = ((g_dbg.mega1BahnhofMask & (1u << bhf)) != 0u);
+    hmiSendM1PowerSet(bhf, !isOn);
+    hmiUiAfterTxAttempt();
+}
+
 static void hmiUiSetButtonEnabled(lv_obj_t* btn, lv_obj_t* label, bool enabled, const char* text) {
     if (!btn) return;
 
@@ -1339,8 +1450,113 @@ static void hmiUiUpdate() {
         "MEGA1 RETRY"
     );
     hmiUiSetActionButtonColor(g_ui.m2RetryBtn, lv_palette_main(LV_PALETTE_ORANGE));
-    hmiUiSetActionButtonColor(g_ui.m1RetryBtn, lv_palette_main(LV_PALETTE_ORANGE));                            
+    hmiUiSetActionButtonColor(g_ui.m1RetryBtn, lv_palette_main(LV_PALETTE_ORANGE));
 
+    for (uint8_t i = 0; i < 4u; ++i) {
+        const bool isOn = ((g_dbg.mega1BahnhofMask & (1u << i)) != 0u);
+
+        if (g_ui.bahnhofLedGreen[i] && g_ui.bahnhofLedRed[i]) {
+            const bool valid = g_dbg.mega1Online;
+
+            lv_color_t colGreen;
+            lv_color_t colRed;
+
+            if (!valid) {
+                colGreen = lv_palette_main(LV_PALETTE_GREY);
+                colRed   = lv_palette_main(LV_PALETTE_GREY);
+            }
+            else if (isOn) {
+                colGreen = lv_palette_main(LV_PALETTE_GREEN);
+                colRed   = lv_palette_main(LV_PALETTE_GREY);
+            }
+            else {
+                colGreen = lv_palette_main(LV_PALETTE_GREY);
+                colRed   = lv_palette_main(LV_PALETTE_RED);
+            }
+
+            // GRÜN
+            lv_obj_set_style_bg_color(g_ui.bahnhofLedGreen[i], colGreen, 0);
+            lv_obj_set_style_border_color(g_ui.bahnhofLedGreen[i], colGreen, 0);
+            lv_obj_set_style_bg_opa(g_ui.bahnhofLedGreen[i], LV_OPA_COVER, 0);
+            lv_obj_set_style_shadow_color(g_ui.bahnhofLedGreen[i], colGreen, 0);
+            lv_obj_set_style_shadow_opa(g_ui.bahnhofLedGreen[i], valid && isOn ? LV_OPA_70 : LV_OPA_30, 0);
+
+            // ROT
+            lv_obj_set_style_bg_color(g_ui.bahnhofLedRed[i], colRed, 0);
+            lv_obj_set_style_border_color(g_ui.bahnhofLedRed[i], colRed, 0);
+            lv_obj_set_style_bg_opa(g_ui.bahnhofLedRed[i], LV_OPA_COVER, 0);
+            lv_obj_set_style_shadow_color(g_ui.bahnhofLedRed[i], colRed, 0);
+            lv_obj_set_style_shadow_opa(g_ui.bahnhofLedRed[i], valid && !isOn ? LV_OPA_70 : LV_OPA_30, 0);
+        }
+
+        if (g_ui.bahnhofToggleBtn[i] && g_ui.bahnhofToggleBtnLabel[i]) {
+            char btnText[16];
+            snprintf(btnText, sizeof(btnText), isOn ? "AUS" : "EIN");
+
+            hmiUiSetButtonEnabled(
+                g_ui.bahnhofToggleBtn[i],
+                g_ui.bahnhofToggleBtnLabel[i],
+                hmiCanSendBhfPowerNow(),
+                btnText
+            );
+
+            hmiUiSetActionButtonColor(
+                g_ui.bahnhofToggleBtn[i],
+                lv_palette_main(LV_PALETTE_BLUE)
+            );
+        }
+    }
+
+    for (uint8_t i = 0; i < 12u; ++i) {
+        const bool valid = g_dbg.mega1Online;
+        const bool istGerade = ((g_dbg.mega1WeicheIstGeradeBits & (1u << i)) != 0u);
+        const bool sollGerade = ((g_dbg.mega1WeicheSollGeradeBits & (1u << i)) != 0u);
+        const bool match = valid && (istGerade == sollGerade);
+
+        if (g_ui.weicheTile[i]) {
+            lv_color_t bg = !valid
+                ? lv_palette_darken(LV_PALETTE_GREY, 2)
+                : (match ? lv_palette_lighten(LV_PALETTE_GREEN, 5)
+                         : lv_palette_lighten(LV_PALETTE_RED, 5));
+            lv_color_t border = !valid
+                ? lv_palette_darken(LV_PALETTE_GREY, 1)
+                : (match ? lv_palette_lighten(LV_PALETTE_GREEN, 2)
+                         : lv_palette_lighten(LV_PALETTE_RED, 2));
+
+            lv_obj_set_style_bg_color(g_ui.weicheTile[i], bg, 0);
+            lv_obj_set_style_border_color(g_ui.weicheTile[i], border, 0);
+        }
+
+        if (g_ui.weicheSymbolFg[i] && g_ui.weicheSymbolBg[i]) {
+            const char* activeText = !valid ? "-" : (istGerade ? "━━━" : "╲");
+            const char* inactiveText = !valid ? "" : (istGerade ? "╲" : "━━━");
+
+            lv_label_set_text(g_ui.weicheSymbolFg[i], activeText);
+            lv_label_set_text(g_ui.weicheSymbolBg[i], inactiveText);
+
+            lv_obj_set_style_text_color(
+                g_ui.weicheSymbolFg[i],
+                !valid ? lv_palette_lighten(LV_PALETTE_GREY, 1) : lv_color_black(),
+                0
+            );
+            lv_obj_set_style_text_color(
+                g_ui.weicheSymbolBg[i],
+                lv_palette_main(LV_PALETTE_GREY),
+                0
+            );
+        }
+
+        if (g_ui.weicheSollLabel[i]) {
+            char sollBuf[16];
+            snprintf(sollBuf, sizeof(sollBuf), "Soll: %s", !valid ? "-" : (sollGerade ? "G" : "A"));
+            lv_label_set_text(g_ui.weicheSollLabel[i], sollBuf);
+            lv_obj_set_style_text_color(
+                g_ui.weicheSollLabel[i],
+                match ? lv_color_black() : lv_palette_darken(LV_PALETTE_RED, 3),
+                0
+            );
+        }
+    }
 
     if (g_ui.trafoLabelA) {
         lv_label_set_text(g_ui.trafoLabelA, trafoABuf);
@@ -1356,8 +1572,12 @@ static void hmiUiUpdate() {
 
 static lv_obj_t* hmiUiCreateActionButton(lv_obj_t* parent, lv_obj_t** outLabel, const char* text) {
     lv_obj_t* btn = lv_btn_create(parent);
-    lv_obj_set_height(btn, 48);
-    lv_obj_set_style_radius(btn, 10, 0);
+    lv_obj_set_height(btn, 36);
+    lv_obj_set_style_radius(btn, 8, 0);
+    lv_obj_set_style_pad_top(btn, 0, 0);
+    lv_obj_set_style_pad_bottom(btn, 0, 0);
+    lv_obj_set_style_pad_left(btn, 10, 0);
+    lv_obj_set_style_pad_right(btn, 10, 0);
     lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
 
     lv_obj_t* label = lv_label_create(btn);
@@ -1435,6 +1655,154 @@ static lv_obj_t* hmiUiCreatePanel(lv_obj_t* parent, const char* title, lv_coord_
         lv_obj_set_style_text_color(label, lv_color_white(), 0);
     }
     return panel;
+}
+
+static void hmiUiCreateBahnhofItem(
+    lv_obj_t* parent,
+    lv_obj_t** outItem,
+    const char* leftText,
+    lv_obj_t** outStateCell,
+    lv_obj_t** outLedGreen,
+    lv_obj_t** outLedRed,
+    lv_obj_t** outToggleBtn,
+    lv_obj_t** outToggleBtnLabel,
+    uint8_t bhfIndex
+) {
+    lv_obj_t* item = lv_obj_create(parent);
+    lv_obj_set_width(item, lv_pct(48));
+    lv_obj_set_height(item, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(item, 0, 0);
+    lv_obj_set_style_pad_all(item, 0, 0);
+    lv_obj_set_layout(item, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(item, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(item, 6, 0);
+    lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* left = lv_obj_create(item);
+    lv_obj_set_size(left, 74, 34);
+    lv_obj_set_style_radius(left, 6, 0);
+    lv_obj_set_style_bg_color(left, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
+    lv_obj_set_style_bg_opa(left, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(left, 0, 0);
+
+    lv_obj_t* leftLabel = lv_label_create(left);
+    lv_label_set_text(leftLabel, leftText ? leftText : "-");
+    lv_obj_center(leftLabel);
+
+    // Container für beide LEDs
+    lv_obj_t* state = lv_obj_create(item);
+    lv_obj_set_size(state, 56, 22);
+    lv_obj_set_style_bg_opa(state, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(state, 0, 0);
+    lv_obj_set_style_pad_all(state, 0, 0);
+    lv_obj_set_style_pad_column(state, 6, 0);
+    lv_obj_set_style_pad_row(state, 0, 0);
+    lv_obj_set_layout(state, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(state, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(state, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(state, LV_OBJ_FLAG_SCROLLABLE);
+
+    // LED GRÜN
+    lv_obj_t* ledGreen = lv_obj_create(state);
+    lv_obj_set_size(ledGreen, 18, 18);
+    lv_obj_set_style_radius(ledGreen, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(ledGreen, 2, 0);
+    lv_obj_set_style_border_color(ledGreen, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_bg_color(ledGreen, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_bg_opa(ledGreen, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(ledGreen, 0, 0);
+    lv_obj_set_style_shadow_width(ledGreen, 6, 0);
+    lv_obj_set_style_shadow_spread(ledGreen, 0, 0);
+    lv_obj_set_style_shadow_color(ledGreen, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_shadow_opa(ledGreen, LV_OPA_40, 0);
+    lv_obj_clear_flag(ledGreen, LV_OBJ_FLAG_SCROLLABLE);
+
+    // LED ROT
+    lv_obj_t* ledRed = lv_obj_create(state);
+    lv_obj_set_size(ledRed, 18, 18);
+    lv_obj_set_style_radius(ledRed, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(ledRed, 2, 0);
+    lv_obj_set_style_border_color(ledRed, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_bg_color(ledRed, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_bg_opa(ledRed, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(ledRed, 0, 0);
+    lv_obj_set_style_shadow_width(ledRed, 6, 0);
+    lv_obj_set_style_shadow_spread(ledRed, 0, 0);
+    lv_obj_set_style_shadow_color(ledRed, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_shadow_opa(ledRed, LV_OPA_40, 0);
+    lv_obj_clear_flag(ledRed, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* btn = hmiUiCreateActionButton(item, outToggleBtnLabel, "EIN");
+    lv_obj_set_size(btn, 64, 34);
+    lv_obj_add_event_cb(btn, hmiUiOnBhfToggleClicked, LV_EVENT_CLICKED, (void*)(uintptr_t)bhfIndex);
+
+    if (outItem) *outItem = item;
+    if (outStateCell) *outStateCell = state; // bleibt für Container
+    if (outLedGreen) *outLedGreen = ledGreen;
+    if (outLedRed)   *outLedRed   = ledRed;
+    if (outToggleBtn) *outToggleBtn = btn;
+}
+
+static void hmiUiCreateWeicheTile(
+    lv_obj_t* parent,
+    uint8_t idx,
+    lv_obj_t** outTile,
+    lv_obj_t** outSymbolBg,
+    lv_obj_t** outSymbolFg,
+    lv_obj_t** outSollLabel
+) {
+    lv_obj_t* tile = lv_obj_create(parent);
+    lv_obj_set_width(tile, lv_pct(23));
+    lv_obj_set_height(tile, 118);
+    lv_obj_set_style_radius(tile, 10, 0);
+    lv_obj_set_style_border_width(tile, 1, 0);
+    lv_obj_set_style_border_color(tile, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
+    lv_obj_set_style_bg_color(tile, lv_palette_lighten(LV_PALETTE_GREEN, 5), 0);
+    lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(tile, 8, 0);
+    lv_obj_set_layout(tile, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(tile, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(tile, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_row(tile, 6, 0);
+    lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+
+    char nameBuf[8];
+    snprintf(nameBuf, sizeof(nameBuf), "W%u", (unsigned)idx);
+    lv_obj_t* name = lv_label_create(tile);
+    lv_label_set_text(name, nameBuf);
+    lv_obj_set_style_text_font(name, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(name, lv_color_black(), 0);
+
+    lv_obj_t* symbolWrap = lv_obj_create(tile);
+    lv_obj_set_width(symbolWrap, lv_pct(100));
+    lv_obj_set_height(symbolWrap, 46);
+    lv_obj_set_style_bg_opa(symbolWrap, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(symbolWrap, 0, 0);
+    lv_obj_set_style_pad_all(symbolWrap, 0, 0);
+    lv_obj_clear_flag(symbolWrap, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* bg = lv_label_create(symbolWrap);
+    lv_label_set_text(bg, "╲");
+    lv_obj_set_style_text_font(bg, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(bg, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_align(bg, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t* fg = lv_label_create(symbolWrap);
+    lv_label_set_text(fg, "━━━");
+    lv_obj_set_style_text_font(fg, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(fg, lv_color_black(), 0);
+    lv_obj_align(fg, LV_ALIGN_CENTER, 0, 0);
+
+    lv_obj_t* soll = lv_label_create(tile);
+    lv_label_set_text(soll, "Soll: -");
+    lv_obj_set_style_text_font(soll, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(soll, lv_color_black(), 0);
+
+    if (outTile) *outTile = tile;
+    if (outSymbolBg) *outSymbolBg = bg;
+    if (outSymbolFg) *outSymbolFg = fg;
+    if (outSollLabel) *outSollLabel = soll;
 }
 
 static void hmiUiCreateStatusRow(
@@ -1583,16 +1951,66 @@ static void createMainUi() {
     lv_obj_set_style_pad_all(g_ui.mainContent, 10, 0);
     lv_obj_set_layout(g_ui.mainContent, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(g_ui.mainContent, LV_FLEX_FLOW_COLUMN);
+    g_ui.bahnhofPanel = hmiUiCreatePanel(g_ui.mainContent, "Bahnhoefe", lv_pct(100));
+    lv_obj_set_style_pad_all(g_ui.bahnhofPanel, 8, 0);
+    lv_obj_set_style_pad_row(g_ui.bahnhofPanel, 6, 0);
+    // >>> FEHLTE KOMPLETT
+    g_ui.bahnhofGrid = lv_obj_create(g_ui.bahnhofPanel);
+    lv_obj_set_width(g_ui.bahnhofGrid, lv_pct(100));
+    lv_obj_set_height(g_ui.bahnhofGrid, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(g_ui.bahnhofGrid, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.bahnhofGrid, 0, 0);
+    lv_obj_set_layout(g_ui.bahnhofGrid, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.bahnhofGrid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(g_ui.bahnhofGrid,
+        LV_FLEX_ALIGN_START,
+        LV_FLEX_ALIGN_START,
+        LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(g_ui.bahnhofGrid, 8, 0);
+    lv_obj_set_style_pad_row(g_ui.bahnhofGrid, 6, 0);
+    for (uint8_t i = 0; i < 4u; ++i) {
+        char leftText[16];
+        snprintf(leftText, sizeof(leftText), "BHF%u", (unsigned)i);
+        hmiUiCreateBahnhofItem(
+            g_ui.bahnhofGrid,
+            &g_ui.bahnhofItem[i],
+            leftText,
+            &g_ui.bahnhofStateCell[i],
+            &g_ui.bahnhofLedGreen[i],
+            &g_ui.bahnhofLedRed[i],
+            &g_ui.bahnhofToggleBtn[i],
+            &g_ui.bahnhofToggleBtnLabel[i],
+            i
+        );
+    }
 
-    lv_obj_t* mainText = lv_label_create(g_ui.mainContent);
-    lv_label_set_text(mainText,
-        "Hauptflaeche\n"
-        "\n"
-        "Hier bleibt Platz fuer spaetere Betriebsdarstellung,\n"
-        "Bloecke, Weichen, Bahnhofs- und weitere Statusinfos.");
-    lv_obj_set_style_text_font(mainText, &lv_font_montserrat_14, 0);
-    lv_label_set_long_mode(mainText, LV_LABEL_LONG_WRAP);
-    lv_obj_set_width(mainText, lv_pct(100));
+    g_ui.weichePanel = hmiUiCreatePanel(g_ui.mainContent, "Weichen (Mega1)", lv_pct(100));
+    lv_obj_set_style_pad_all(g_ui.weichePanel, 8, 0);
+    lv_obj_set_style_pad_row(g_ui.weichePanel, 6, 0);
+
+    g_ui.weicheGrid = lv_obj_create(g_ui.weichePanel);
+    lv_obj_set_width(g_ui.weicheGrid, lv_pct(100));
+    lv_obj_set_height(g_ui.weicheGrid, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(g_ui.weicheGrid, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.weicheGrid, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.weicheGrid, 0, 0);
+    lv_obj_set_layout(g_ui.weicheGrid, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.weicheGrid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(g_ui.weicheGrid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(g_ui.weicheGrid, 8, 0);
+    lv_obj_set_style_pad_row(g_ui.weicheGrid, 8, 0);
+    lv_obj_clear_flag(g_ui.weicheGrid, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (uint8_t i = 0; i < 12u; ++i) {
+        hmiUiCreateWeicheTile(
+            g_ui.weicheGrid,
+            i,
+            &g_ui.weicheTile[i],
+            &g_ui.weicheSymbolBg[i],
+            &g_ui.weicheSymbolFg[i],
+            &g_ui.weicheSollLabel[i]
+        );
+    }
 
     g_ui.rightPane = lv_obj_create(split);
     lv_obj_set_width(g_ui.rightPane, lv_pct(32));
@@ -1819,6 +2237,8 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         bool mega1SelftestRetryAvailable = false;
         bool mega2SelftestRetryAvailable = false;
         uint8_t mega1BahnhofMask = 0;
+        uint16_t mega1WeicheIstGeradeBits = 0;
+        uint16_t mega1WeicheSollGeradeBits = 0;
         bool uiStartupOverlayActive = false;
         bool uiM1RetryOverlayActive = false;
         bool uiM2RetryOverlayActive = false;
@@ -1868,6 +2288,8 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     next.actionCanWrite = g_dbg.actionCanWrite;
     next.mega1SelftestRetryAvailable = g_dbg.mega1SelftestRetryAvailable;
     next.mega2SelftestRetryAvailable = g_dbg.mega2SelftestRetryAvailable;
+    next.mega1WeicheIstGeradeBits = g_dbg.mega1WeicheIstGeradeBits;
+    next.mega1WeicheSollGeradeBits = g_dbg.mega1WeicheSollGeradeBits;
     next.uiStartupOverlayActive = g_dbg.uiStartupOverlayActive;
     next.uiM1RetryOverlayActive = g_dbg.uiM1RetryOverlayActive;
     next.uiM2RetryOverlayActive = g_dbg.uiM2RetryOverlayActive;
@@ -1914,6 +2336,19 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         uint8_t u8 = 0;
         if (jsonFindUInt8(mega1, "\"bahnhofMask\"", &u8)) {
             next.mega1BahnhofMask = u8;
+        }
+        if (jsonFindUInt32(mega1, "\"weicheIstBits\"", &u32)) {
+            next.mega1WeicheIstGeradeBits = (uint16_t)(u32 & 0x0FFFu);
+        }
+        if (jsonFindUInt32(mega1, "\"weicheSollBits\"", &u32)) {
+            next.mega1WeicheSollGeradeBits = (uint16_t)(u32 & 0x0FFFu);
+        }
+        // Fallback für ältere/alternative Feldnamen
+        if (jsonFindUInt32(mega1, "\"weicheIstGeradeBits\"", &u32)) {
+            next.mega1WeicheIstGeradeBits = (uint16_t)(u32 & 0x0FFFu);
+        }
+        if (jsonFindUInt32(mega1, "\"weicheSollGeradeBits\"", &u32)) {
+            next.mega1WeicheSollGeradeBits = (uint16_t)(u32 & 0x0FFFu);
         }
         if (jsonFindString(mega1, "\"defectList\"", next.mega1DefectList, sizeof(next.mega1DefectList))) {
         }
@@ -2089,6 +2524,8 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     g_dbg.actionCanWrite = next.actionCanWrite;
     g_dbg.mega1SelftestRetryAvailable = next.mega1SelftestRetryAvailable;
     g_dbg.mega2SelftestRetryAvailable = next.mega2SelftestRetryAvailable;
+    g_dbg.mega1WeicheIstGeradeBits = next.mega1WeicheIstGeradeBits;
+    g_dbg.mega1WeicheSollGeradeBits = next.mega1WeicheSollGeradeBits;
     g_dbg.uiStartupOverlayActive = next.uiStartupOverlayActive;
     g_dbg.uiM1RetryOverlayActive = next.uiM1RetryOverlayActive;
     g_dbg.uiM2RetryOverlayActive = next.uiM2RetryOverlayActive;
