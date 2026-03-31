@@ -341,8 +341,11 @@ static void hmiUiOnPowerOffClicked(lv_event_t* e);
 static void hmiUiOnRetryCloseClicked(lv_event_t* e);
 static void hmiUiOnAutoClicked(lv_event_t* e);
 static void hmiUiOnBhfToggleClicked(lv_event_t* e);
+static void hmiUiOnWeicheClicked(lv_event_t* e);
 static bool hmiCanSendBhfPowerNow();
 static bool hmiSendM1PowerSet(uint8_t bhf, bool on);
+static bool hmiCanSendM1WeicheNow();
+static bool hmiSendM1WeicheSet(uint8_t idx, bool gerade);
 static void hmiUiCreateBahnhofItem(
     lv_obj_t* parent,
     lv_obj_t** outItem,
@@ -1033,6 +1036,53 @@ static bool hmiCanSendBhfPowerNow() {
            (!g_dbg.safetyNotausActive);
 }
 
+static bool hmiCanSendM1WeicheNow() {
+    return g_dbg.actionCanWrite &&
+           g_dbg.ethConnected &&
+           g_dbg.mega1Online &&
+           g_dbg.systemReady &&
+           (!g_dbg.safetyLock) &&
+           (!g_dbg.safetyNotausActive);
+}
+
+static bool hmiSendM1WeicheSet(uint8_t idx, bool gerade) {
+    if (idx >= 12u) {
+        g_dbg.txErr++;
+        hmiTxSetLast("bad-weiche");
+        return false;
+    }
+
+    char line[128];
+    const int len = snprintf(
+        line,
+        sizeof(line),
+        "{\"type\":\"action\",\"action\":\"m1WeicheSet\",\"idx\":%u,\"gerade\":%s}",
+        (unsigned)idx,
+        gerade ? "true" : "false"
+    );
+
+    if (len <= 0 || (size_t)len >= sizeof(line)) {
+        g_dbg.txErr++;
+        hmiTxSetLast("fmt-err");
+        return false;
+    }
+
+    size_t written = 0;
+    written += Serial0.write((const uint8_t*)line, (size_t)len);
+    written += Serial0.write((uint8_t)'\n');
+    Serial0.flush();
+
+    if (written != (size_t)len + 1U) {
+        g_dbg.txErr++;
+        hmiTxSetLast("uart-err");
+        return false;
+    }
+
+    g_dbg.txFrames++;
+    hmiTxSetLast("m1WeicheSet");
+    return true;
+}
+
 static bool hmiSendM1PowerSet(uint8_t bhf, bool on) {
     if (bhf >= 4u) {
         g_dbg.txErr++;
@@ -1094,6 +1144,33 @@ static void hmiUiOnBhfToggleClicked(lv_event_t* e) {
 
     const bool isOn = ((g_dbg.mega1BahnhofMask & (1u << bhf)) != 0u);
     hmiSendM1PowerSet(bhf, !isOn);
+    hmiUiAfterTxAttempt();
+}
+
+static void hmiUiOnWeicheClicked(lv_event_t* e) {
+    if (!e) {
+        return;
+    }
+
+    const uintptr_t raw = (uintptr_t)lv_event_get_user_data(e);
+    const uint8_t idx = (uint8_t)raw;
+    if (idx >= 12u) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-weiche");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    if (!hmiCanSendM1WeicheNow()) {
+        g_dbg.txDropped++;
+        hmiTxSetLast("drop-weiche");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
+    // Toggle bewusst über IST, nicht über SOLL.
+    const bool istGerade = ((g_dbg.mega1WeicheIstGeradeBits & (1u << idx)) != 0u);
+    hmiSendM1WeicheSet(idx, !istGerade);
     hmiUiAfterTxAttempt();
 }
 
@@ -1635,6 +1712,7 @@ static void hmiUiUpdate() {
         const bool istGerade = ((g_dbg.mega1WeicheIstGeradeBits & (1u << i)) != 0u);
         const bool sollGerade = ((g_dbg.mega1WeicheSollGeradeBits & (1u << i)) != 0u);
         const bool match = valid && (istGerade == sollGerade);
+        const bool canClick = hmiCanSendM1WeicheNow();
         const bool changed =
             !g_weicheRenderCache[i].init ||
             g_weicheRenderCache[i].valid != valid ||
@@ -1654,6 +1732,19 @@ static void hmiUiUpdate() {
 
             lv_obj_set_style_bg_color(g_ui.weicheTile[i], bg, 0);
             lv_obj_set_style_border_color(g_ui.weicheTile[i], border, 0);
+
+        }
+
+        if (g_ui.weicheTile[i]) {
+            if (canClick) {
+                lv_obj_clear_state(g_ui.weicheTile[i], LV_STATE_DISABLED);
+                lv_obj_add_flag(g_ui.weicheTile[i], LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_set_style_opa(g_ui.weicheTile[i], LV_OPA_COVER, 0);
+            } else {
+                lv_obj_add_state(g_ui.weicheTile[i], LV_STATE_DISABLED);
+                lv_obj_clear_flag(g_ui.weicheTile[i], LV_OBJ_FLAG_CLICKABLE);
+                lv_obj_set_style_opa(g_ui.weicheTile[i], LV_OPA_80, 0);
+            }
         }
 
         if (changed && g_ui.weicheSymbolFg[i]) {
@@ -1938,17 +2029,25 @@ static void hmiUiCreateWeicheTile(
     lv_obj_t* tile = lv_obj_create(parent);
     lv_obj_set_width(tile, lv_pct(23));
     lv_obj_set_height(tile, 118);
+    lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_set_style_radius(tile, 10, 0);
     lv_obj_set_style_border_width(tile, 1, 0);
     lv_obj_set_style_border_color(tile, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
     lv_obj_set_style_bg_color(tile, lv_palette_lighten(LV_PALETTE_GREEN, 5), 0);
     lv_obj_set_style_bg_opa(tile, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(tile, lv_palette_lighten(LV_PALETTE_BLUE, 3), LV_STATE_PRESSED);
+    lv_obj_set_style_border_color(tile, lv_palette_main(LV_PALETTE_BLUE), LV_STATE_PRESSED);
+    lv_obj_set_style_border_width(tile, 2, LV_STATE_PRESSED);
+    lv_obj_set_style_opa(tile, LV_OPA_80, LV_STATE_DISABLED);
+    lv_obj_set_style_border_color(tile, lv_palette_main(LV_PALETTE_GREY), LV_STATE_DISABLED);
     lv_obj_set_style_pad_all(tile, 8, 0);
     lv_obj_set_layout(tile, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(tile, LV_FLEX_FLOW_COLUMN);
     lv_obj_set_flex_align(tile, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
     lv_obj_set_style_pad_row(tile, 6, 0);
     lv_obj_clear_flag(tile, LV_OBJ_FLAG_SCROLLABLE);
+    lv_obj_add_flag(tile, LV_OBJ_FLAG_CLICKABLE);
+    lv_obj_add_event_cb(tile, hmiUiOnWeicheClicked, LV_EVENT_CLICKED, (void*)(uintptr_t)idx);
 
     char nameBuf[8];
     snprintf(nameBuf, sizeof(nameBuf), "W%u", (unsigned)idx);
