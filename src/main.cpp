@@ -84,6 +84,10 @@ struct HmiDebugState {
     uint16_t mega1WeicheSollGeradeBits = 0;
     uint16_t mega2TurnoutIstMask = 0;
     uint16_t mega2TurnoutSollMask = 0;
+    uint16_t mega2BlockOccMask = 0;
+    uint16_t mega2SignalGrantMask = 0;
+    bool mega2BlockOccValid = false;
+    bool mega2SignalGrantValid = false;
     bool uiStartupOverlayActive = false;
     bool uiM1RetryOverlayActive = false;
     bool uiM2RetryOverlayActive = false;
@@ -114,6 +118,15 @@ struct HmiUi {
     lv_obj_t* leftPane = nullptr;
     lv_obj_t* rightPane = nullptr;
     lv_obj_t* mainContent = nullptr;
+    lv_obj_t* leftTabview = nullptr;
+    lv_obj_t* tabMega1 = nullptr;
+    lv_obj_t* tabSbhf = nullptr;
+    lv_obj_t* tabBlocks = nullptr;
+    lv_obj_t* tabDebug = nullptr;
+    lv_obj_t* blocksTabTitle = nullptr;
+    lv_obj_t* blocksTabLabel = nullptr;
+    lv_obj_t* debugTabTitle = nullptr;
+    lv_obj_t* debugTabLabel = nullptr;
     lv_obj_t* bahnhofPanel = nullptr;
     lv_obj_t* bahnhofGrid = nullptr;
     lv_obj_t* bahnhofItem[4] = {nullptr, nullptr, nullptr, nullptr};
@@ -349,6 +362,8 @@ static void hmiUiBuildStatusTexts(
     bool* outM1Warn,
     bool* outM2Warn
 );
+static void hmiBuildBlocksTabText(char* out, size_t outSize);
+static void hmiBuildDebugTabText(char* out, size_t outSize);
 static void hmiOnDebugToggle(lv_event_t* e);
 static void hmiUiOnAckClicked(lv_event_t* e);
 static void hmiUiOnM1TestClicked(lv_event_t* e);
@@ -628,11 +643,6 @@ static void hmiUiAfterTxAttempt() {
     // das macht den Press-/Click-Eindruck träge und bügelt visuelle Zustände
     // teilweise wieder weg. Die eigentliche UI-Aktualisierung läuft regulär
     // über loop() / g_uiDirty.
-
-    if (g_debugLabelLeft || g_debugLabelRight) {
-        updateDebugOverlay();
-        g_lastDebugOverlayUpdateMs = millis();
-    }
     g_dbg.lastMsgType[sizeof(g_dbg.lastMsgType) - 1] = '\0';
 }
 
@@ -1454,6 +1464,12 @@ static void hmiUiUpdate() {
     const bool canWrite = g_dbg.actionCanWrite;
     const bool diagLease = g_dbg.diagActive;
     const bool autoIsEnabled = g_dbg.mega1ModeAuto ? canManual : canAuto;
+    const uint32_t activeLeftTab =
+        g_ui.leftTabview ? (uint32_t)lv_tabview_get_tab_act(g_ui.leftTabview) : 0u;
+    const bool updateMega1Tab = (activeLeftTab == 0u);
+    const bool updateSbhfTab  = (activeLeftTab == 1u);
+    const bool updateBlocksTab = (activeLeftTab == 2u);
+    const bool updateDebugTab = (activeLeftTab == 3u);
 
     char systemBuf[64];
     char ethBuf[96];
@@ -1687,7 +1703,7 @@ static void hmiUiUpdate() {
     hmiUiSetActionButtonColor(g_ui.m2RetryBtn, lv_palette_main(LV_PALETTE_ORANGE));
     hmiUiSetActionButtonColor(g_ui.m1RetryBtn, lv_palette_main(LV_PALETTE_ORANGE));
 
-    for (uint8_t i = 0; i < 4u; ++i) {
+    if (updateMega1Tab) for (uint8_t i = 0; i < 4u; ++i) {
         const bool isOn = ((g_dbg.mega1BahnhofMask & (1u << i)) != 0u);
         const bool valid = g_dbg.mega1Online;
         const bool canToggle = hmiCanSendBhfPowerNow();
@@ -1759,9 +1775,10 @@ static void hmiUiUpdate() {
         g_bahnhofRenderCache[i].canToggle = canToggle;
     }
 
-    const bool canClickAll = hmiCanSendM1WeicheNow();
+    if (updateMega1Tab) {
+        const bool canClickAll = hmiCanSendM1WeicheNow();
 
-    for (uint8_t i = 0; i < 12u; ++i) {
+        for (uint8_t i = 0; i < 12u; ++i) {
         const bool valid = g_dbg.mega1Online;
         const bool istGerade = ((g_dbg.mega1WeicheIstGeradeBits & (1u << i)) != 0u);
         const bool sollGerade = ((g_dbg.mega1WeicheSollGeradeBits & (1u << i)) != 0u);
@@ -1822,9 +1839,10 @@ static void hmiUiUpdate() {
         g_weicheRenderCache[i].match = match;
         g_weicheRenderCache[i].canClick = canClick;
     }
+}
 
-    for (uint8_t row = 0; row < 2u; ++row) {
-        if (!g_ui.sbhfSummaryLabel[row]) continue;
+    if (updateSbhfTab) for (uint8_t row = 0; row < 2u; ++row) {
+        if (!g_ui.sbhfSummaryLabel[row]) { continue; }
         const uint8_t localA = (uint8_t)(row * 2u);
         const uint8_t localB = (uint8_t)(localA + 1u);
         const uint8_t idxA = localA;
@@ -1851,6 +1869,18 @@ static void hmiUiUpdate() {
             valid ? lv_color_white() : lv_palette_lighten(LV_PALETTE_GREY, 1),
             0
         );
+    }
+
+    if (updateBlocksTab && g_ui.blocksTabLabel) {
+        char blocksBuf[512];
+        hmiBuildBlocksTabText(blocksBuf, sizeof(blocksBuf));
+        lv_label_set_text(g_ui.blocksTabLabel, blocksBuf);
+    }
+
+    if (updateDebugTab && g_ui.debugTabLabel) {
+        char dbgBuf[768];
+        hmiBuildDebugTabText(dbgBuf, sizeof(dbgBuf));
+        lv_label_set_text(g_ui.debugTabLabel, dbgBuf);
     }
 
     if (g_ui.trafoLabelA && (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.trafoABuf, trafoABuf))) {
@@ -2318,6 +2348,89 @@ static void hmiUiBuildStatusTexts(
     if (outM2Warn) *outM2Warn = m2Warn;
 }
 
+static void hmiBuildBlocksTabText(char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+
+    const bool occValid = g_dbg.mega2Online && g_dbg.mega2BlockOccValid;
+    const bool sigValid = g_dbg.mega2Online && g_dbg.mega2SignalGrantValid;
+
+    auto occChar = [&](uint8_t bit) -> char {
+        if (!occValid) return '?';
+        return (g_dbg.mega2BlockOccMask & (1u << bit)) ? 'B' : 'F';
+    };
+    auto sigChar = [&](uint8_t bit) -> char {
+        if (!sigValid) return '?';
+        return (g_dbg.mega2SignalGrantMask & (1u << bit)) ? 'G' : 'R';
+    };
+
+    snprintf(
+        out, outSize,
+        "B1:%c  B2:%c  B3:%c  B4:%c  B5:%c  B6:%c\n"
+        "SB1:%c  SB2:%c  SB3:%c\n"
+        "\n"
+        "Frei: 12:%c  23:%c  34:%c  41:%c  45:%c  5S1:%c\n"
+        "      5S2:%c  5S3:%c  S1B6:%c  S2B6:%c  S3B6:%c  64:%c",
+        occChar(0), occChar(1), occChar(2), occChar(3), occChar(4), occChar(5),
+        occChar(6), occChar(7), occChar(8),
+        sigChar(0), sigChar(1), sigChar(2), sigChar(3), sigChar(4), sigChar(5),
+        sigChar(6), sigChar(7), sigChar(8), sigChar(9), sigChar(10), sigChar(11)
+    );
+}
+
+static void hmiBuildDebugTabText(char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+
+    const uint32_t uptimeS = millis() / 1000UL;
+    if (g_dbg.rxErrorHoldActive && (millis() - g_dbg.lastRxErrorMs >= HMI_RX_ERROR_HOLD_MS)) {
+        g_dbg.rxErrorHoldActive = false;
+    }
+    strncpy(g_dbg.lastRxErrorDisplay,
+            g_dbg.rxErrorHoldActive ? g_dbg.lastRxError : "-",
+            sizeof(g_dbg.lastRxErrorDisplay) - 1);
+    g_dbg.lastRxErrorDisplay[sizeof(g_dbg.lastRxErrorDisplay) - 1] = '\0';
+
+    snprintf(
+        out,
+        outSize,
+        "UART: %s\n"
+        "rxState: %s\n"
+        "expLen: %u\n"
+        "gotLen: %u\n"
+        "okLen: %u\n"
+        "errLen: %u\n"
+        "hdrTout: %lu\n"
+        "payTout: %lu\n"
+        "rxBytes: %lu\n"
+        "rxFrames: %lu\n"
+        "jsonOk: %lu\n"
+        "jsonErr: %lu\n"
+        "rxTout: %lu\n"
+        "rxLen: %lu\n"
+        "rxBad: %lu\n"
+        "rxOverflow: %lu\n"
+        "uptime_s: %lu\n"
+        "txFrames: %lu\n"
+        "txErr: %lu\n"
+        "txDrop: %lu\n"
+        "lastTx: %s\n"
+        "uiMsLast: %lu\n"
+        "uiMsMax: %lu\n"
+        "vA10: %u\n"
+        "vB10: %u\n"
+        "CTRL: %s\n"
+        "WRITE: %s\n"
+        "lastMsg: %s\n"
+        "lastErr: %s",
+        g_dbg.uartConnected ? "connected" : "idle", g_dbg.rxStateText,
+        (unsigned)g_dbg.rxExpectedLen, (unsigned)g_dbg.rxGotLen, (unsigned)g_dbg.lastOkLen, (unsigned)g_dbg.lastErrLen,
+        (unsigned long)g_dbg.rxHdrTimeouts, (unsigned long)g_dbg.rxPayloadTimeouts, (unsigned long)g_dbg.rxBytes, (unsigned long)g_dbg.rxFrames,
+        (unsigned long)g_dbg.jsonOk, (unsigned long)g_dbg.jsonErr, (unsigned long)g_dbg.rxTimeouts, (unsigned long)g_dbg.rxLenErr,
+        (unsigned long)g_dbg.rxBadFrames, (unsigned long)g_dbg.rxOverflow, (unsigned long)uptimeS, (unsigned long)g_dbg.txFrames,
+        (unsigned long)g_dbg.txErr, (unsigned long)g_dbg.txDropped, g_dbg.lastTx, (unsigned long)g_uiUpdateLastMs, (unsigned long)g_uiUpdateMaxMs,
+        (unsigned)g_dbg.analogVA10, (unsigned)g_dbg.analogVB10, hmiUiCtrlText(), hmiUiWriteText(), g_dbg.lastMsgType, g_dbg.lastRxErrorDisplay
+   );
+}
+
 static void createMainUi() {
     lv_obj_t* screen = lv_scr_act();
 
@@ -2369,7 +2482,106 @@ static void createMainUi() {
     lv_obj_set_style_pad_all(g_ui.mainContent, 10, 0);
     lv_obj_set_layout(g_ui.mainContent, LV_LAYOUT_FLEX);
     lv_obj_set_flex_flow(g_ui.mainContent, LV_FLEX_FLOW_COLUMN);
-    g_ui.bahnhofPanel = hmiUiCreatePanel(g_ui.mainContent, "Bahnhoefe", lv_pct(100));
+    
+    g_ui.leftTabview = lv_tabview_create(g_ui.mainContent, LV_DIR_TOP, 40);
+    lv_obj_set_width(g_ui.leftTabview, lv_pct(100));
+    lv_obj_set_flex_grow(g_ui.leftTabview, 1);
+    lv_obj_set_style_bg_opa(g_ui.leftTabview, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.leftTabview, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.leftTabview, 0, 0);
+
+    g_ui.tabMega1 = lv_tabview_add_tab(g_ui.leftTabview, "Mega1");
+    g_ui.tabSbhf  = lv_tabview_add_tab(g_ui.leftTabview, "SBHF");
+    g_ui.tabBlocks = lv_tabview_add_tab(g_ui.leftTabview, "Bloecke");
+    g_ui.tabDebug  = lv_tabview_add_tab(g_ui.leftTabview, "Debug");
+
+    lv_obj_t* tabBtns = lv_tabview_get_tab_btns(g_ui.leftTabview);
+    if (tabBtns) {
+        lv_obj_set_style_bg_color(tabBtns, lv_palette_darken(LV_PALETTE_GREY, 4), 0);
+        lv_obj_set_style_bg_opa(tabBtns, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(tabBtns, 0, 0);
+        lv_obj_set_style_pad_all(tabBtns, 2, 0);
+        lv_obj_set_style_outline_width(tabBtns, 0, 0);
+
+        lv_obj_set_style_bg_color(tabBtns, lv_palette_darken(LV_PALETTE_GREY, 3), LV_PART_ITEMS);
+        lv_obj_set_style_bg_opa(tabBtns, LV_OPA_COVER, LV_PART_ITEMS);
+        lv_obj_set_style_text_color(tabBtns, lv_color_white(), LV_PART_ITEMS);
+        lv_obj_set_style_border_width(tabBtns, 0, LV_PART_ITEMS);
+
+        lv_obj_set_style_bg_color(tabBtns, lv_palette_main(LV_PALETTE_BLUE), LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_bg_opa(tabBtns, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(tabBtns, lv_color_white(), LV_PART_ITEMS | LV_STATE_CHECKED);
+    }
+
+    lv_obj_t* tabContent = lv_tabview_get_content(g_ui.leftTabview);
+    if (tabContent) {
+        lv_obj_set_style_bg_opa(tabContent, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(tabContent, 0, 0);
+        lv_obj_set_style_pad_all(tabContent, 0, 0);
+    }
+
+    lv_obj_set_style_pad_all(g_ui.tabMega1, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.tabMega1, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.tabMega1, 0, 0);
+    lv_obj_set_style_outline_width(g_ui.tabMega1, 0, 0);
+    lv_obj_set_layout(g_ui.tabMega1, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.tabMega1, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.tabMega1, 6, 0);
+    
+    lv_obj_set_style_pad_all(g_ui.tabBlocks, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.tabBlocks, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.tabBlocks, 0, 0);
+    lv_obj_set_style_outline_width(g_ui.tabBlocks, 0, 0);
+    lv_obj_set_layout(g_ui.tabBlocks, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.tabBlocks, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.tabBlocks, 6, 0);
+
+    g_ui.blocksTabTitle = lv_label_create(g_ui.tabBlocks);
+    lv_label_set_text(g_ui.blocksTabTitle, "Bloecke");
+    lv_obj_set_style_text_font(g_ui.blocksTabTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.blocksTabTitle, lv_color_white(), 0);
+
+    g_ui.blocksTabLabel = lv_label_create(g_ui.tabBlocks);
+    lv_obj_set_width(g_ui.blocksTabLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.blocksTabLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.blocksTabLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.blocksTabLabel, lv_color_white(), 0);
+    lv_label_set_text(
+        g_ui.blocksTabLabel,
+        "B1:?  B2:?  B3:?  B4:?  B5:?  B6:?\nSB1:?  SB2:?  SB3:?\n\nFrei: -"
+    );
+
+    lv_obj_set_style_pad_all(g_ui.tabDebug, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.tabDebug, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.tabDebug, 0, 0);
+    lv_obj_set_style_outline_width(g_ui.tabDebug, 0, 0);
+    lv_obj_set_layout(g_ui.tabDebug, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.tabDebug, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.tabDebug, 6, 0);
+
+    g_ui.debugTabTitle = lv_label_create(g_ui.tabDebug);
+    lv_label_set_text(g_ui.debugTabTitle, "Debug");
+    lv_obj_set_style_text_font(g_ui.debugTabTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.debugTabTitle, lv_color_white(), 0);
+
+    g_ui.debugTabLabel = lv_label_create(g_ui.tabDebug);
+    lv_obj_set_width(g_ui.debugTabLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.debugTabLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.debugTabLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.debugTabLabel, lv_color_white(), 0);
+    lv_label_set_text(g_ui.debugTabLabel, "Debug-Tab bereit.");
+
+    lv_obj_set_style_pad_all(g_ui.tabSbhf, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.tabSbhf, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.tabSbhf, 0, 0);
+    lv_obj_set_style_outline_width(g_ui.tabSbhf, 0, 0);
+    lv_obj_set_layout(g_ui.tabSbhf, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.tabSbhf, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.tabSbhf, 6, 0);
+    lv_obj_set_style_bg_opa(g_ui.tabSbhf, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.tabSbhf, 0, 0);
+
+    g_ui.bahnhofPanel = hmiUiCreatePanel(g_ui.tabMega1, "Bahnhoefe", lv_pct(100));
     lv_obj_set_style_pad_all(g_ui.bahnhofPanel, 8, 0);
     lv_obj_set_style_pad_row(g_ui.bahnhofPanel, 6, 0);
     // >>> FEHLTE KOMPLETT
@@ -2402,7 +2614,7 @@ static void createMainUi() {
         );
     }
 
-    g_ui.weichePanel = hmiUiCreatePanel(g_ui.mainContent, "Weichen (Mega1)", lv_pct(100));
+    g_ui.weichePanel = hmiUiCreatePanel(g_ui.tabMega1, "Weichen (Mega1)", lv_pct(100));
     lv_obj_set_style_pad_all(g_ui.weichePanel, 8, 0);
     lv_obj_set_style_pad_row(g_ui.weichePanel, 6, 0);
     lv_obj_set_height(g_ui.weichePanel, LV_SIZE_CONTENT);
@@ -2454,13 +2666,13 @@ static void createMainUi() {
         );
     }
 
-    g_ui.sbhfSummaryTitle = lv_label_create(g_ui.mainContent);
+    g_ui.sbhfSummaryTitle = lv_label_create(g_ui.tabSbhf);
     lv_label_set_text(g_ui.sbhfSummaryTitle, "SBHF-Weichen (read-only)");
     lv_obj_set_style_text_font(g_ui.sbhfSummaryTitle, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(g_ui.sbhfSummaryTitle, lv_color_white(), 0);
 
     for (uint8_t row = 0; row < 2u; ++row) {
-        g_ui.sbhfSummaryLabel[row] = lv_label_create(g_ui.mainContent);
+        g_ui.sbhfSummaryLabel[row] = lv_label_create(g_ui.tabSbhf);
         lv_obj_set_width(g_ui.sbhfSummaryLabel[row], lv_pct(100));
         lv_label_set_long_mode(g_ui.sbhfSummaryLabel[row], LV_LABEL_LONG_WRAP);
         lv_obj_set_style_text_font(g_ui.sbhfSummaryLabel[row], &lv_font_montserrat_16, 0);
@@ -2703,6 +2915,10 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         uint16_t mega1WeicheSollGeradeBits = 0;
         uint16_t mega2TurnoutIstMask = 0;
         uint16_t mega2TurnoutSollMask = 0;
+        uint16_t mega2BlockOccMask = 0;
+        uint16_t mega2SignalGrantMask = 0;
+        bool mega2BlockOccValid = false;
+        bool mega2SignalGrantValid = false;
         bool uiStartupOverlayActive = false;
         bool uiM1RetryOverlayActive = false;
         bool uiM2RetryOverlayActive = false;
@@ -2756,6 +2972,10 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     next.mega1WeicheSollGeradeBits = g_dbg.mega1WeicheSollGeradeBits;
     next.mega2TurnoutIstMask = g_dbg.mega2TurnoutIstMask;
     next.mega2TurnoutSollMask = g_dbg.mega2TurnoutSollMask;
+    next.mega2BlockOccMask = g_dbg.mega2BlockOccMask;
+    next.mega2SignalGrantMask = g_dbg.mega2SignalGrantMask;
+    next.mega2BlockOccValid = g_dbg.mega2BlockOccValid;
+    next.mega2SignalGrantValid = g_dbg.mega2SignalGrantValid;
     next.uiStartupOverlayActive = g_dbg.uiStartupOverlayActive;
     next.uiM1RetryOverlayActive = g_dbg.uiM1RetryOverlayActive;
     next.uiM2RetryOverlayActive = g_dbg.uiM2RetryOverlayActive;
@@ -2804,6 +3024,14 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     }
     if (jsonFindUInt32(json, "\"weicheSollBits\"", &u32)) {
         next.mega1WeicheSollGeradeBits = (uint16_t)(u32 & 0x0FFFu);
+    }
+    if (jsonFindUInt32(json, "\"blockOccMask\"", &u32)) {
+        next.mega2BlockOccMask = (uint16_t)(u32 & 0x01FFu);
+        next.mega2BlockOccValid = true;
+    }
+    if (jsonFindUInt32(json, "\"signalGrantMask\"", &u32)) {
+        next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
+        next.mega2SignalGrantValid = true;
     }
 
     // Section-based merge semantics:
@@ -2861,6 +3089,34 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         }
         if (jsonFindUInt32(mega2, "\"turnoutSollMask\"", &u32)) {
             next.mega2TurnoutSollMask = (uint16_t)(u32 & 0xFFFFu);
+        }
+        if (jsonFindUInt32(mega2, "\"blockOccMask\"", &u32)) {
+            next.mega2BlockOccMask = (uint16_t)(u32 & 0x01FFu);
+            next.mega2BlockOccValid = true;
+        }
+        if (jsonFindUInt32(mega2, "\"blockOccupiedMask\"", &u32)) {
+            next.mega2BlockOccMask = (uint16_t)(u32 & 0x01FFu);
+            next.mega2BlockOccValid = true;
+        }
+        if (jsonFindUInt32(mega2, "\"belegungMask\"", &u32)) {
+            next.mega2BlockOccMask = (uint16_t)(u32 & 0x01FFu);
+            next.mega2BlockOccValid = true;
+        }
+        if (jsonFindUInt32(mega2, "\"signalGrantMask\"", &u32)) {
+            next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
+            next.mega2SignalGrantValid = true;
+        }
+        if (jsonFindUInt32(mega2, "\"signalGrantedMask\"", &u32)) {
+            next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
+            next.mega2SignalGrantValid = true;
+        }
+        if (jsonFindUInt32(mega2, "\"routeGrantMask\"", &u32)) {
+            next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
+            next.mega2SignalGrantValid = true;
+        }
+        if (jsonFindUInt32(mega2, "\"routeGrantedMask\"", &u32)) {
+            next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
+            next.mega2SignalGrantValid = true;
         }
         if (jsonFindString(mega2, "\"defectList\"", next.mega2DefectList, sizeof(next.mega2DefectList))) {
         }
@@ -3028,6 +3284,10 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
     g_dbg.mega1WeicheSollGeradeBits = next.mega1WeicheSollGeradeBits;
     g_dbg.mega2TurnoutIstMask = next.mega2TurnoutIstMask;
     g_dbg.mega2TurnoutSollMask = next.mega2TurnoutSollMask;
+    g_dbg.mega2BlockOccMask = next.mega2BlockOccMask;
+    g_dbg.mega2SignalGrantMask = next.mega2SignalGrantMask;
+    g_dbg.mega2BlockOccValid = next.mega2BlockOccValid;
+    g_dbg.mega2SignalGrantValid = next.mega2SignalGrantValid;
     g_dbg.uiStartupOverlayActive = next.uiStartupOverlayActive;
     g_dbg.uiM1RetryOverlayActive = next.uiM1RetryOverlayActive;
     g_dbg.uiM2RetryOverlayActive = next.uiM2RetryOverlayActive;
@@ -3565,9 +3825,7 @@ void setup() {
         lv_obj_set_style_bg_opa(lv_scr_act(), LV_OPA_COVER, 0);
 
         createMainUi();
-        createDebugOverlay();
         hmiUiUpdate();
-        updateDebugOverlay();
 
         lvgl_port_unlock();
     }
@@ -3591,8 +3849,6 @@ void loop() {
 #endif
 
     const uint32_t now = millis();
-    const bool overlayDue = (now - g_lastDebugOverlayUpdateMs >= 200);
-
     if (g_stateUiPending &&
         ((uint32_t)(now - g_stateUiPendingSinceMs) >= HMI_STATE_UI_COALESCE_MS)) {
         g_uiDirty = true;
@@ -3605,7 +3861,7 @@ void loop() {
     }
 
     const bool uiDue = g_uiDirty;
-    if (overlayDue || uiDue) {
+    if (uiDue) {
         // Vor dem UI-Update noch einmal UART leeren.
         pollUartRx();
 
@@ -3621,16 +3877,7 @@ void loop() {
                     g_uiUpdateMaxMs = uiElapsedMs;
                 }
             }
-
-            if (overlayDue || uiDue) {
-                updateDebugOverlay();
-            }
-
             lvgl_port_unlock();
-        }
-
-        if (overlayDue) {
-            g_lastDebugOverlayUpdateMs = now;
         }
 
         // Direkt nach dem UI-Update erneut abholen, falls während LVGL neue Bytes ankamen.
