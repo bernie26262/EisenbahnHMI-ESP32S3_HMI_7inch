@@ -2445,10 +2445,9 @@ static void hmiBuildBlocksTabText(char* out, size_t outSize) {
         out, outSize,
         "B1: %s   B2: %s   B3: %s   B4: %s\n"
         "B5: %s   B6: %s\n"
-        "\n"
         "SBHF1: %s   SBHF2: %s   SBHF3: %s\n"
         "\n"
-        "Freigaben:\n"
+        "Blockfreigaben:\n"
         "1->2: %s   2->3: %s   3->4: %s\n"
         "4->1: %s   4->5: %s\n"
         "5->SBHF1: %s   5->SBHF2: %s   5->SBHF3: %s\n"
@@ -2638,7 +2637,7 @@ static void createMainUi() {
     lv_obj_set_style_pad_row(g_ui.tabBlocks, 6, 0);
 
     g_ui.blocksTabTitle = lv_label_create(g_ui.tabBlocks);
-    lv_label_set_text(g_ui.blocksTabTitle, "Bloecke");
+    lv_label_set_text(g_ui.blocksTabTitle, "Blockbelegung");
     lv_obj_set_style_text_font(g_ui.blocksTabTitle, &lv_font_montserrat_16, 0);
     lv_obj_set_style_text_color(g_ui.blocksTabTitle, lv_color_white(), 0);
 
