@@ -119,8 +119,8 @@ struct HmiUi {
     lv_obj_t* rightPane = nullptr;
     lv_obj_t* mainContent = nullptr;
     lv_obj_t* leftTabview = nullptr;
-    lv_obj_t* tabMega1 = nullptr;
-    lv_obj_t* tabSbhf = nullptr;
+    lv_obj_t* tabWeichen = nullptr;
+    lv_obj_t* tabBahnhoefe = nullptr;
     lv_obj_t* tabBlocks = nullptr;
     lv_obj_t* tabDebug = nullptr;
     lv_obj_t* blocksTabTitle = nullptr;
@@ -138,17 +138,6 @@ struct HmiUi {
     lv_obj_t* bahnhofToggleBtnLabel[4] = {nullptr, nullptr, nullptr, nullptr};
     lv_obj_t* weichePanel = nullptr;
     lv_obj_t* weicheGrid = nullptr;
-    lv_obj_t* weicheRow[6] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t* weicheCell[12] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t* weicheNameLabel[12] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t* weicheStateLabel[12] = {nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t* sbhfWeichePanel = nullptr;
-    lv_obj_t* sbhfWeicheGrid = nullptr;
-    lv_obj_t* sbhfWeicheRow[2] = {nullptr, nullptr};
-    lv_obj_t* sbhfWeicheCell[4] = {nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t* sbhfWeicheNameLabel[4] = {nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t* sbhfWeicheStateLabel[4] = {nullptr, nullptr, nullptr, nullptr};
-    lv_obj_t* sbhfSummaryTitle = nullptr;
     lv_obj_t* sbhfSummaryLabel[2] = {nullptr, nullptr};
 
     // right panels
@@ -160,7 +149,6 @@ struct HmiUi {
 
     // right panel titles / texts
     lv_obj_t* lockLabel = nullptr;
-    lv_obj_t* defectTitle = nullptr;
     lv_obj_t* m2DefectLabel = nullptr;
     lv_obj_t* m1DefectLabel = nullptr;
     lv_obj_t* trafoLabelA = nullptr;
@@ -191,41 +179,14 @@ struct HmiUi {
     lv_obj_t* m2RetryBtn = nullptr;
     lv_obj_t* m1RetryBtnLabel = nullptr;
     lv_obj_t* m2RetryBtnLabel = nullptr;
-    
-    lv_obj_t* pillRowTop = nullptr;
-    lv_obj_t* pillRowBottom = nullptr;
-    lv_obj_t* pillSystem = nullptr;
-    lv_obj_t* pillSystemLabel = nullptr;
-    lv_obj_t* pillEth = nullptr;
-    lv_obj_t* pillEthLabel = nullptr;
-    lv_obj_t* pillWs = nullptr;
-    lv_obj_t* pillWsLabel = nullptr;
-    lv_obj_t* pillMega1 = nullptr;
-    lv_obj_t* pillMega1Label = nullptr;
-    lv_obj_t* pillMega2 = nullptr;
-    lv_obj_t* pillMega2Label = nullptr;
-    lv_obj_t* pillMode = nullptr;
-    lv_obj_t* pillModeLabel = nullptr;
-    lv_obj_t* pillPower = nullptr;
-    lv_obj_t* pillPowerLabel = nullptr;
-    lv_obj_t* m1TestBtn = nullptr;
-    lv_obj_t* m2TestBtn = nullptr;
-    lv_obj_t* m1TestBtnLabel = nullptr;
-    lv_obj_t* m2TestBtnLabel = nullptr;
-    lv_obj_t* ackBtn = nullptr;
-    lv_obj_t* powerRow = nullptr;
-    lv_obj_t* powerBtnCol = nullptr;
     lv_obj_t* powerLed = nullptr;
     lv_obj_t* powerBtn = nullptr;
     lv_obj_t* powerOffBtn = nullptr;
-    lv_obj_t* autoRow = nullptr;
     lv_obj_t* autoLed = nullptr;
     lv_obj_t* autoBtn = nullptr;
-    lv_obj_t* ackBtnLabel = nullptr;
     lv_obj_t* powerBtnLabel = nullptr;
     lv_obj_t* powerOffBtnLabel = nullptr;
     lv_obj_t* autoBtnLabel = nullptr;
-    lv_obj_t* modeLed = nullptr;
 
     lv_obj_t* startupOverlay = nullptr;
     lv_obj_t* startupPanel = nullptr;
@@ -254,18 +215,7 @@ struct BahnhofRenderCache {
     bool canToggle = false;
 };
 
-struct WeicheRenderCache {
-    bool init = false;
-    bool valid = false;
-    bool istGerade = false;
-    bool sollGerade = false;
-    bool match = false;
-    bool canClick = false;
-};
-
 static BahnhofRenderCache g_bahnhofRenderCache[4];
-static WeicheRenderCache g_weicheRenderCache[12];
-static WeicheRenderCache g_sbhfWeicheRenderCache[4];
 
 struct RightPanelRenderCache {
     bool init = false;
@@ -289,13 +239,6 @@ struct RightPanelRenderCache {
 
 static RightPanelRenderCache g_rightPanelRenderCache;
 
-
-static lv_obj_t* g_debugLabelLeft = nullptr;
-static lv_obj_t* g_debugLabelRight = nullptr;
-static lv_obj_t* g_debugToggleBtn = nullptr;
-static lv_obj_t* g_debugToggleLabel = nullptr;
-static uint32_t g_lastDebugOverlayUpdateMs = 0;
-
 static bool g_pendingStartupM1 = false;
 static bool g_pendingStartupM2 = false;
 static bool g_pendingStartupAck = false;
@@ -308,7 +251,6 @@ static uint32_t g_overlayM1LastTrueMs = 0;
 static uint32_t g_overlayM2LastTrueMs = 0;
 
 static char* g_uartFrameBuf = nullptr;
-static bool g_debugExpanded = false;
 static uint32_t g_uiUpdateLastMs = 0;
 static bool g_retrySessionM1Active = false;
 static bool g_retrySessionM2Active = false;
@@ -336,14 +278,34 @@ static uint32_t g_lastRxMs = 0;
 
 static bool strChanged(const char* a, const char* b);
 static void copyStr(char* dst, size_t dstSize, const char* src);
+static void hmiBuildWeicheSummaryPart(
+    char* out,
+    size_t outSize,
+    uint8_t turnoutNumber,
+    bool valid,
+    bool istGerade,
+    bool sollGerade
+);
+static void hmiSetCachedStatusCell(
+    lv_obj_t* cell,
+    lv_obj_t* label,
+    char* cacheBuf,
+    size_t cacheBufSize,
+    bool cacheInit,
+    const char* value,
+    lv_color_t color
+);
+static void hmiSetCachedLabelText(
+    lv_obj_t* label,
+    char* cacheBuf, size_t cacheBufSize,
+    bool cacheInit, const char* value
+);
 static bool g_startupSessionActive = false;
 static uint32_t g_lastFrameByteMs = 0;
 static HmiRxState g_rxState = RX_WAIT_SYNC1;
 static uint16_t g_rxExpectedLen = 0;
 
 static void hmiUiUpdate();
-static void updateDebugOverlay();
-static void hmiUiSetPill(lv_obj_t* pill, lv_obj_t* label, const char* text, lv_color_t bg);
 static lv_obj_t* hmiUiCreateActionButton(lv_obj_t* parent, lv_obj_t** outLabel, const char* text);
 static void hmiUiSetActionButtonColor(lv_obj_t* btn, lv_color_t bg);
 static lv_obj_t* hmiUiCreatePanel(lv_obj_t* parent, const char* title, lv_coord_t width);
@@ -354,25 +316,9 @@ static void hmiUiCreateStatusRow(
     lv_obj_t** outValueLabel
 );
 static void hmiUiSetStatusCell(lv_obj_t* cell, lv_obj_t* label, const char* text, lv_color_t bg);
-static void hmiUiBuildStatusTexts(
-    char* systemBuf, size_t systemBufSize,
-    char* ethBuf, size_t ethBufSize,
-    char* wsBuf, size_t wsBufSize,
-    char* m1Buf, size_t m1BufSize,
-    char* m2Buf, size_t m2BufSize,
-    char* modeBuf, size_t modeBufSize,
-    char* powerBuf, size_t powerBufSize,
-    bool* outSystemWarn,
-    bool* outM1Warn,
-    bool* outM2Warn
-);
 static uint8_t hmiBlockOccDisplayBitToMaskBit(uint8_t displayBit);
 static uint8_t hmiGrantDisplayBitToMaskBit(uint8_t displayBit);
-static void hmiBuildBlocksTabText(char* out, size_t outSize);
-static void hmiBuildDebugTabText(char* out, size_t outSize);
-static void hmiOnDebugToggle(lv_event_t* e);
-static void hmiUiOnAckClicked(lv_event_t* e);
-static void hmiUiOnM1TestClicked(lv_event_t* e);
+static void hmiCreateRightStatusUi();
 static void hmiUiOnM2TestClicked(lv_event_t* e);
 static void hmiUiOnStartupAckClicked(lv_event_t* e);
 static void hmiUiOnM1RetryClicked(lv_event_t* e);
@@ -405,19 +351,33 @@ static void hmiUiCreateBahnhofItem(
     lv_obj_t** outToggleBtnLabel,
     uint8_t bhfIndex
 );
-static void hmiUiCreateWeicheCompactCell(
-    lv_obj_t* parent,
-    uint8_t idx,
-    bool clickable,
-    lv_obj_t** outCell,
-    lv_obj_t** outNameLabel,
-    lv_obj_t** outStateLabel
-);
-static lv_obj_t* hmiUiCreateStatusLed(lv_obj_t* parent, lv_coord_t size);
 static void frameParserReset();
 static void frameParserCommitPayload();
 static void frameParserCheckTimeout(uint32_t nowMs);
 static void frameParserProcessByte(uint8_t b);
+
+static void hmiBuildBlocksTabText(char* out, size_t outSize);
+static void hmiBuildDebugTabText(char* out, size_t outSize);
+static void hmiUiOnAckClicked(lv_event_t* e);
+static void hmiUiOnM1TestClicked(lv_event_t* e);
+
+static void hmiCreateLeftTabsChrome();
+static void hmiCreateWeichenTabUi();
+static void hmiCreateBahnhofTabUi();
+static void hmiCreateBlocksTabUi();
+static void hmiCreateDebugTabUi();
+static void hmiCreateLeftStatusPlaceholdersUi();
+static void hmiCreateLeftPaneUi(lv_obj_t* split);
+static void hmiCreateRightActionsUi();
+static void hmiCreateRightWriteUi();
+static void hmiCreateRightTrafoUi();
+static void hmiCreateRightRetryUi();
+static void hmiCreateRightPaneUi(lv_obj_t* split);
+static void hmiCreateStartupOverlayUi(lv_obj_t* screen);
+static void hmiCreateRetryOverlayUi(lv_obj_t* screen);
+static void hmiCreateOverlayUi(lv_obj_t* screen);
+static lv_obj_t* hmiCreateMainSplitUi();
+static void createMainUi();
 
 static bool hmiStartupAllDone();
 static bool hmiRetryOverlayActive();
@@ -425,9 +385,17 @@ static void hmiRetryOverlayUpdate();
 static bool jsonFindString(const char* json, const char* key, char* out, size_t outSize);
 static bool jsonFindUInt32(const char* json, const char* key, uint32_t* outValue);
 static bool jsonFindUInt8(const char* json, const char* key, uint8_t* outValue);
+static bool jsonFindUInt32Any(
+    const char* json,
+    const char* const* keys,
+    size_t keyCount,
+    uint32_t* outValue);
 static bool hmiJsonTypeIs(const char* json, const char* typeValue);
 static bool hmiJsonIsAnalog(const char* json);
 static void hmiDebugExtractAnalogFromJson(const char* json);
+struct ParsedState;
+static void hmiSeedParsedStateFromCurrent(ParsedState& dst);
+static void hmiApplyParsedState(const ParsedState& next);
 static bool hmiJsonIsStateLike(const char* json);
 
 static const char* rxStateToText(HmiRxState st) {
@@ -479,30 +447,44 @@ static void hmiTxSetLast(const char* msg) {
     g_dbg.lastTx[sizeof(g_dbg.lastTx) - 1] = '\0';
 }
 
+// Schreibrecht-Grundlage fuer alle HMI-Aktionen.
+// Wenn ETH/diag-Lease Schreiben sperrt, muessen alle lokalen Fallback-Regeln
+// ebenfalls "zu" bleiben.
 static bool hmiCanWriteNow() {
     return g_dbg.actionCanWrite;
 }
 
+// Zweistufiges Action-Gating:
+//   1) Wenn der authoritative State ein explizites "canX" liefert, hat dieses
+//      Vorrang und oeffnet die Aktion sofort.
+//   2) Andernfalls greift eine lokale, konservative Fallback-Regel.
+//
+// Das HMI bleibt damit auch dann sinnvoll bedienbar, wenn nicht jede
+// Nachricht alle Action-Flags enthaelt oder aeltere Payloads unterwegs sind.
+static bool hmiCanSendWithOverride(bool actionAllowed, bool fallbackAllowed) {
+    return actionAllowed || fallbackAllowed;
+}
+
 static bool hmiCanSendM1TestNow() {
-    if (g_dbg.actionCanStartM1Selftest) {
-        return true;
-    }
-    return hmiCanWriteNow() &&
-           g_dbg.mega1Online &&
-           g_dbg.startupM1Needs &&
-           (!g_dbg.startupM1SelftestDone) &&
-           (!g_dbg.startupM1SelftestRunning);
+    return hmiCanSendWithOverride(
+        g_dbg.actionCanStartM1Selftest,
+        hmiCanWriteNow() &&
+        g_dbg.mega1Online &&
+        g_dbg.startupM1Needs &&
+        (!g_dbg.startupM1SelftestDone) &&
+        (!g_dbg.startupM1SelftestRunning)
+    );
 }
 
 static bool hmiCanSendM2TestNow() {
-    if (g_dbg.actionCanStartM2Selftest) {
-        return true;
-    }
-    return hmiCanWriteNow() &&
-           g_dbg.mega2Online &&
-           g_dbg.startupM2Needs &&
-           (!g_dbg.startupM2SelftestDone) &&
-           (!g_dbg.startupM2SelftestRunning);
+    return hmiCanSendWithOverride(
+        g_dbg.actionCanStartM2Selftest,
+        hmiCanWriteNow() &&
+        g_dbg.mega2Online &&
+        g_dbg.startupM2Needs &&
+        (!g_dbg.startupM2SelftestDone) &&
+        (!g_dbg.startupM2SelftestRunning)
+    );
 }
 
 static bool hmiHasMega1Defects() {
@@ -513,6 +495,10 @@ static bool hmiHasMega2Defects() {
     return g_dbg.mega2DefectList[0] != '\0';
 }
 
+// Retry-Aktionen sind absichtlich strenger als normale Action-Gates:
+// kein Override-Helper, sondern zusaetzlich Defect-Status, Retry-Verfuegbarkeit
+// und Pending-Latches beachten. Dadurch werden Doppelstarts und sinnlose
+// Retries vermieden.
 static bool hmiCanSendM1RetryNow() {
     return hmiCanWriteNow() &&
            g_dbg.mega1Online &&
@@ -532,77 +518,80 @@ static bool hmiCanSendM2RetryNow() {
 }
 
 static bool hmiCanSendStartupConfirmNow() {
-    if (g_dbg.actionCanStartupConfirm) {
-        return true;
-    }
-    return hmiCanWriteNow() &&
-           g_dbg.startupChecklistActive &&
-           g_dbg.mega2Online &&
-           hmiStartupAllDone();
+    return hmiCanSendWithOverride(
+        g_dbg.actionCanStartupConfirm,
+        hmiCanWriteNow() &&
+        g_dbg.startupChecklistActive &&
+        g_dbg.mega2Online &&
+        hmiStartupAllDone()
+    );
 }
 
 static bool hmiCanSendAckNow() {
-    if (g_dbg.actionCanAck) {
-        return true;
-    }
-    return hmiCanWriteNow() &&
-           g_dbg.safetyAckRequired &&
-           g_dbg.mega2Online;
+    return hmiCanSendWithOverride(
+        g_dbg.actionCanAck,
+        hmiCanWriteNow() &&
+        g_dbg.safetyAckRequired &&
+        g_dbg.mega2Online
+    );
 }
 
 static bool hmiCanSendPowerNow() {
-    if (g_dbg.actionCanPowerOn) {
-        return true;
-    }
-    return hmiCanWriteNow() &&
-           g_dbg.ethConnected &&
-           g_dbg.mega1Online &&
-           g_dbg.mega2Online &&
-           g_dbg.systemReady &&
-           (!g_dbg.safetyPowerOn) &&
-           (!g_dbg.safetyNotausActive) &&
-           (!g_dbg.safetyLock);
+    return hmiCanSendWithOverride(
+        g_dbg.actionCanPowerOn,
+        hmiCanWriteNow() &&
+        g_dbg.ethConnected &&
+        g_dbg.mega1Online &&
+        g_dbg.mega2Online &&
+        g_dbg.systemReady &&
+        (!g_dbg.safetyPowerOn) &&
+        (!g_dbg.safetyNotausActive) &&
+        (!g_dbg.safetyLock)
+    );
 }
 
 static bool hmiCanSendPowerOffNow() {
-    if (g_dbg.actionCanPowerOff) {
-        return true;
-    }
-    return hmiCanWriteNow() &&
-           g_dbg.ethConnected &&
-           g_dbg.mega1Online &&
-           g_dbg.mega2Online &&
-           g_dbg.safetyPowerOn;
+    return hmiCanSendWithOverride(
+        g_dbg.actionCanPowerOff,
+        hmiCanWriteNow() &&
+        g_dbg.ethConnected &&
+        g_dbg.mega1Online &&
+        g_dbg.mega2Online &&
+        g_dbg.safetyPowerOn
+    );
 }
 
 static bool hmiCanSendAutoNow() {
-    if (g_dbg.actionCanAuto) {
-        return true;
-    }
-    return hmiCanWriteNow() &&
-           g_dbg.ethConnected &&
-           g_dbg.mega1Online &&
-           g_dbg.mega2Online &&
-           g_dbg.systemReady &&
-           (!g_dbg.safetyLock) &&
-           (!g_dbg.safetyNotausActive) &&
-           (!g_dbg.mega1ModeAuto);
+    return hmiCanSendWithOverride(
+        g_dbg.actionCanAuto,
+        hmiCanWriteNow() &&
+        g_dbg.ethConnected &&
+        g_dbg.mega1Online &&
+        g_dbg.mega2Online &&
+        g_dbg.systemReady &&
+        (!g_dbg.safetyLock) &&
+        (!g_dbg.safetyNotausActive) &&
+        (!g_dbg.mega1ModeAuto)
+    );
 }
 
 static bool hmiCanSendManualNow() {
-    if (g_dbg.actionCanManual) {
-        return true;
-    }
-    return hmiCanWriteNow() &&
-           g_dbg.ethConnected &&
-           g_dbg.mega1Online &&
-           g_dbg.mega2Online &&
-           g_dbg.systemReady &&
-           (!g_dbg.safetyLock) &&
-           (!g_dbg.safetyNotausActive) &&
-           g_dbg.mega1ModeAuto;
+    return hmiCanSendWithOverride(
+        g_dbg.actionCanManual,
+        hmiCanWriteNow() &&
+        g_dbg.ethConnected &&
+        g_dbg.mega1Online &&
+        g_dbg.mega2Online &&
+        g_dbg.systemReady &&
+        (!g_dbg.safetyLock) &&
+        (!g_dbg.safetyNotausActive) &&
+        g_dbg.mega1ModeAuto
+    );
 }
 
+// Zentrale Ausgabestelle fuer HMI->ETH-Actions.
+// Alle einfachen Commands laufen durch dieses JSON-Format, damit Namens- oder
+// Formatwechsel nicht ueber viele Event-Handler verteilt sind.
 static bool hmiSendActionCommand(const char* action) {
     if (!action || !*action) {
         g_dbg.txErr++;
@@ -642,24 +631,41 @@ static bool hmiSendActionCommand(const char* action) {
     return true;
 }
 
+// Nach jedem TX-Versuch nur Dirty markieren.
+// Keine sofortige Voll-Aktualisierung direkt im Event-Handler, damit die
+// Button-Interaktion visuell reaktionsschnell bleibt.
 static void hmiUiAfterTxAttempt() {
     g_uiDirty = true;
-    
-    // Keine sofortige komplette UI-Neuzeichnung direkt im Event-Handler:
-    // das macht den Press-/Click-Eindruck träge und bügelt visuelle Zustände
-    // teilweise wieder weg. Die eigentliche UI-Aktualisierung läuft regulär
-    // über loop() / g_uiDirty.
-    g_dbg.lastMsgType[sizeof(g_dbg.lastMsgType) - 1] = '\0';
 }
 
+// Startup-Confirm-Sequenz
+//
+// Diese Funktion bildet bewusst eine feste Reihenfolge ab, die nicht als
+// beliebige Menge einzelner Aktionen verstanden werden darf.
+//
+// Reihenfolge:
+//   1) Mega1 in AUTO bringen
+//   2) offene Startup-Checklist-Punkte fuer Mega1 / Mega2 quittieren
+//   3) Safety-Lock erst ganz am Ende quittieren
+//
+// Warum diese Reihenfolge wichtig ist:
+//   - AUTO ist der gewuenschte Betriebsmodus fuer den normalen Anlagenbetrieb
+//   - Checklist-Flags muessen vor dem finalen Abschluss sauber gesetzt sein
+//   - safetyAck darf nicht "zu frueh" passieren, solange noch Startup-Schritte
+//     offen sind
+//
+// Diese Reihenfolge ist Teil der fachlichen Semantik und sollte nicht
+// umsortiert oder auf mehrere verstreute Stellen verteilt werden.
 static bool hmiSendStartupConfirmSequence() {
     bool ok = true;
 
+    // 1) Betriebsmodus absichern: Mega1 vor dem finalen Confirm auf AUTO setzen.
     // Wie WebUI: sicherheitshalber vor der finalen Quittierung AUTO anfordern.
     if (g_dbg.mega1Online) {
         ok = hmiSendActionCommand("setAuto") && ok;
     }
 
+    // 2) Offene Startup-Checklist-Punkte gezielt abschliessen.
     if (g_dbg.startupM1Needs) {
         ok = hmiSendActionCommand("markMega1ChecklistDone") && ok;
     }
@@ -668,6 +674,7 @@ static bool hmiSendStartupConfirmSequence() {
         ok = hmiSendActionCommand("markMega2ChecklistDone") && ok;
     }
 
+    // 3) Safety erst ganz am Ende quittieren.
     // Nur falls wirklich ein Safety-Lock aktiv ist.
     if (g_dbg.safetyLock) {
         ok = hmiSendActionCommand("safetyAck") && ok;
@@ -686,6 +693,16 @@ static bool hmiStartupOverlayActive() {
     if (g_dbg.startupChecklistActive) {
         g_startupSessionActive = true;
     }
+
+    // "Sticky Session"-Logik:
+    // Das Overlay darf in Uebergangsphasen nicht kurz verschwinden,
+    // nur weil einzelne Statusbits fuer einen Zyklus umspringen.
+    // Deshalb halten wir waehrend der gesamten Startup-/Quittierphase
+    // einen lokalen Session-Zustand.
+    //
+    // Verlassen wird die Session erst dann, wenn wirklich alles sauber
+    // abgeschlossen ist. Das ist absichtlich konservativ und vermeidet
+    // das frueher beobachtete kurze Auf-/Zu-Flackern des Overlays.
 
     // Overlay während der gesamten Startup-/Quittier-Phase "sticky" halten,
     // damit es in Übergängen nicht kurz verschwindet und wieder auftaucht.
@@ -721,6 +738,29 @@ static bool hmiRetryOverlayActive() {
 static bool hmiStartupAllDone() {
     return ((!g_dbg.startupM1Needs) || g_dbg.startupM1SelftestDone) &&
            ((!g_dbg.startupM2Needs) || g_dbg.startupM2SelftestDone);
+}
+
+static bool jsonFindUInt32Any(
+    const char* json,
+    const char* const* keys,
+    size_t keyCount,
+    uint32_t* outValue
+) {
+    if (!json || !keys || keyCount == 0 || !outValue) {
+        return false;
+    }
+
+    for (size_t i = 0; i < keyCount; ++i) {
+        const char* key = keys[i];
+        if (key && jsonFindUInt32(json, key, outValue)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static inline void hmiAssignMaskedUInt16(uint16_t& dst, uint32_t value, uint16_t mask) {
+    dst = (uint16_t)(value & (uint32_t)mask);
 }
 
 static bool hmiJsonTypeIs(const char* json, const char* typeValue) {
@@ -1218,6 +1258,738 @@ static void hmiUiOnWeicheClicked(lv_event_t* e) {
     hmiUiAfterTxAttempt();
 }
 
+static lv_obj_t* hmiUiCreateIndicatorLed(lv_obj_t* parent) {
+    lv_obj_t* led = lv_obj_create(parent);
+    lv_obj_set_size(led, 14, 14);
+    lv_obj_set_style_radius(led, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(led, 1, 0);
+    lv_obj_set_style_border_color(led, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
+    lv_obj_set_style_bg_color(led, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
+    lv_obj_set_style_bg_opa(led, LV_OPA_COVER, 0);
+    lv_obj_set_style_shadow_width(led, 6, 0);
+    lv_obj_set_style_shadow_color(led, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
+    lv_obj_set_style_shadow_opa(led, LV_OPA_40, 0);
+    lv_obj_clear_flag(led, LV_OBJ_FLAG_SCROLLABLE);
+    return led;
+}
+
+static lv_obj_t* hmiUiCreateActionButtonWithLeftLed(
+    lv_obj_t* parent,
+    lv_obj_t** outLed,
+    lv_obj_t** outLabel,
+    const char* text
+) {
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_set_width(row, lv_pct(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_set_style_pad_column(row, 8, 0);
+    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* led = nullptr;
+    if (outLed) {
+        led = hmiUiCreateIndicatorLed(row);
+        *outLed = led;
+    }
+
+    lv_obj_t* btn = hmiUiCreateActionButton(row, outLabel, text);
+    lv_obj_set_flex_grow(btn, 1);
+    lv_obj_set_width(btn, lv_pct(100));
+
+    if (!outLed) {
+        lv_obj_set_style_pad_column(row, 0, 0);
+        lv_obj_set_style_pad_left(row, 22, 0);
+    }
+    return btn;
+}
+
+static lv_obj_t* hmiUiCreateActionButton(lv_obj_t* parent, lv_obj_t** outLabel, const char* text) {
+    lv_obj_t* btn = lv_btn_create(parent);
+    lv_obj_set_height(btn, 36);
+    lv_obj_set_style_radius(btn, 8, 0);
+    lv_obj_set_style_pad_top(btn, 0, 0);
+    lv_obj_set_style_pad_bottom(btn, 0, 0);
+    lv_obj_set_style_pad_left(btn, 10, 0);
+    lv_obj_set_style_pad_right(btn, 10, 0);
+    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
+
+    lv_obj_t* label = lv_label_create(btn);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+
+    if (outLabel) {
+        *outLabel = label;
+    }
+    return btn;
+}
+
+static lv_obj_t* hmiUiCreateOverlayButton(lv_obj_t* parent, const char* text) {
+    lv_obj_t* btn = lv_btn_create(parent);
+    lv_obj_set_height(btn, 52);
+    lv_obj_set_style_radius(btn, 10, 0);
+    lv_obj_t* label = lv_label_create(btn);
+    lv_label_set_text(label, text);
+    lv_obj_center(label);
+    return btn;
+}
+
+static lv_obj_t* hmiUiCreatePanel(lv_obj_t* parent, const char* title, lv_coord_t width) {
+    lv_obj_t* panel = lv_obj_create(parent);
+    lv_obj_set_width(panel, width);
+    lv_obj_set_height(panel, LV_SIZE_CONTENT);
+    lv_obj_set_style_radius(panel, 10, 0);
+    lv_obj_set_style_bg_color(panel, lv_palette_darken(LV_PALETTE_GREY, 4), 0);
+    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(panel, 1, 0);
+    lv_obj_set_style_border_color(panel, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
+    lv_obj_set_style_pad_all(panel, 10, 0);
+    lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(panel, 8, 0);
+
+    if (title && *title) {
+        lv_obj_t* label = lv_label_create(panel);
+        lv_label_set_text(label, title);
+        lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+    }
+    return panel;
+}
+
+static void hmiUiCreateBahnhofItem(
+    lv_obj_t* parent,
+    lv_obj_t** outItem,
+    const char* leftText,
+    lv_obj_t** outStateCell,
+    lv_obj_t** outLedGreen,
+    lv_obj_t** outLedRed,
+    lv_obj_t** outToggleBtn,
+    lv_obj_t** outToggleBtnLabel,
+    uint8_t bhfIndex
+) {
+    lv_obj_t* item = lv_obj_create(parent);
+    lv_obj_set_width(item, lv_pct(48));
+    lv_obj_set_height(item, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(item, 0, 0);
+    lv_obj_set_style_pad_all(item, 0, 0);
+    lv_obj_set_layout(item, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(item, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(item, 6, 0);
+    lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+
+    lv_obj_t* left = lv_obj_create(item);
+    lv_obj_set_size(left, 74, 34);
+    lv_obj_set_style_radius(left, 6, 0);
+    lv_obj_set_style_bg_color(left, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
+    lv_obj_set_style_bg_opa(left, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(left, 0, 0);
+
+    lv_obj_t* leftLabel = lv_label_create(left);
+    lv_label_set_text(leftLabel, leftText ? leftText : "-");
+    lv_obj_center(leftLabel);
+
+    lv_obj_t* state = lv_obj_create(item);
+    lv_obj_set_size(state, 56, 22);
+    lv_obj_set_style_bg_opa(state, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(state, 0, 0);
+    lv_obj_set_style_pad_all(state, 0, 0);
+    lv_obj_set_style_pad_column(state, 6, 0);
+    lv_obj_set_style_pad_row(state, 0, 0);
+    lv_obj_set_layout(state, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(state, LV_FLEX_FLOW_ROW);
+    lv_obj_set_flex_align(state, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
+    lv_obj_clear_flag(state, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* ledGreen = lv_obj_create(state);
+    lv_obj_set_size(ledGreen, 18, 18);
+    lv_obj_set_style_radius(ledGreen, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(ledGreen, 2, 0);
+    lv_obj_set_style_border_color(ledGreen, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_bg_color(ledGreen, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_bg_opa(ledGreen, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(ledGreen, 0, 0);
+    lv_obj_set_style_shadow_width(ledGreen, 0, 0);
+    lv_obj_set_style_shadow_spread(ledGreen, 0, 0);
+    lv_obj_set_style_shadow_color(ledGreen, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_shadow_opa(ledGreen, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(ledGreen, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* ledRed = lv_obj_create(state);
+    lv_obj_set_size(ledRed, 18, 18);
+    lv_obj_set_style_radius(ledRed, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_border_width(ledRed, 2, 0);
+    lv_obj_set_style_border_color(ledRed, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_bg_color(ledRed, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_bg_opa(ledRed, LV_OPA_COVER, 0);
+    lv_obj_set_style_pad_all(ledRed, 0, 0);
+    lv_obj_set_style_shadow_width(ledRed, 0, 0);
+    lv_obj_set_style_shadow_spread(ledRed, 0, 0);
+    lv_obj_set_style_shadow_color(ledRed, lv_palette_main(LV_PALETTE_GREY), 0);
+    lv_obj_set_style_shadow_opa(ledRed, LV_OPA_TRANSP, 0);
+    lv_obj_clear_flag(ledRed, LV_OBJ_FLAG_SCROLLABLE);
+
+    lv_obj_t* btn = hmiUiCreateActionButton(item, outToggleBtnLabel, "EIN");
+    lv_obj_set_size(btn, 64, 34);
+    lv_obj_add_event_cb(btn, hmiUiOnBhfToggleClicked, LV_EVENT_CLICKED, (void*)(uintptr_t)bhfIndex);
+
+    if (outItem) *outItem = item;
+    if (outStateCell) *outStateCell = state;
+    if (outLedGreen) *outLedGreen = ledGreen;
+    if (outLedRed)   *outLedRed   = ledRed;
+    if (outToggleBtn) *outToggleBtn = btn;
+}
+
+static void hmiUiCreateStatusRow(
+    lv_obj_t* parent,
+    const char* leftText,
+    lv_obj_t** outValueCell,
+    lv_obj_t** outValueLabel
+) {
+    lv_obj_t* row = lv_obj_create(parent);
+    lv_obj_set_width(row, lv_pct(100));
+    lv_obj_set_height(row, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(row, 0, 0);
+    lv_obj_set_style_pad_all(row, 0, 0);
+    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(row, 8, 0);
+
+    lv_obj_t* left = lv_obj_create(row);
+    lv_obj_set_size(left, 120, 38);
+    lv_obj_set_style_radius(left, 6, 0);
+    lv_obj_set_style_bg_color(left, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
+    lv_obj_set_style_bg_opa(left, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(left, 0, 0);
+    lv_obj_t* leftLabel = lv_label_create(left);
+    lv_label_set_text(leftLabel, leftText ? leftText : "-");
+    lv_obj_center(leftLabel);
+
+    lv_obj_t* right = lv_obj_create(row);
+    lv_obj_set_flex_grow(right, 1);
+    lv_obj_set_height(right, 38);
+    lv_obj_set_style_radius(right, 6, 0);
+    lv_obj_set_style_border_width(right, 0, 0);
+    lv_obj_t* rightLabel = lv_label_create(right);
+    lv_label_set_text(rightLabel, "-");
+    lv_obj_center(rightLabel);
+
+    if (outValueCell) *outValueCell = right;
+    if (outValueLabel) *outValueLabel = rightLabel;
+}
+
+static void hmiUiSetStatusCell(lv_obj_t* cell, lv_obj_t* label, const char* text, lv_color_t bg) {
+    if (!cell) return;
+    if (label) {
+        lv_label_set_text(label, text ? text : "-");
+    }
+    lv_obj_set_style_bg_color(cell, bg, 0);
+    lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
+    lv_obj_set_style_text_color(cell, lv_color_white(), 0);
+}
+
+static void hmiUiSetActionButtonColor(lv_obj_t* btn, lv_color_t bg) {
+    if (!btn) return;
+    lv_obj_set_style_bg_color(btn, bg, 0);
+    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(btn, 0, 0);
+    lv_obj_set_style_text_color(btn, lv_color_white(), 0);
+}
+
+static void hmiCreateRightActionsUi() {
+    g_ui.actionPanel = hmiUiCreatePanel(g_ui.rightPane, "Aktionen", lv_pct(100));
+
+    g_ui.powerBtn = hmiUiCreateActionButtonWithLeftLed(
+        g_ui.actionPanel, &g_ui.powerLed, &g_ui.powerBtnLabel, "POWER ON"
+    );
+    lv_obj_add_event_cb(g_ui.powerBtn, hmiUiOnPowerClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.powerOffBtn = hmiUiCreateActionButtonWithLeftLed(
+        g_ui.actionPanel, nullptr, &g_ui.powerOffBtnLabel, "STOP / POWER OFF"
+    );
+    lv_obj_add_event_cb(g_ui.powerOffBtn, hmiUiOnPowerOffClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.autoBtn = hmiUiCreateActionButtonWithLeftLed(
+        g_ui.actionPanel, &g_ui.autoLed, &g_ui.autoBtnLabel, "AUTO"
+    );
+    lv_obj_add_event_cb(g_ui.autoBtn, hmiUiOnAutoClicked, LV_EVENT_CLICKED, nullptr);
+}
+
+static void hmiCreateRightStatusUi() {
+    g_ui.systemPanel = hmiUiCreatePanel(g_ui.rightPane, "Systemstatus", lv_pct(100));
+    hmiUiCreateStatusRow(g_ui.systemPanel, "ETH",     &g_ui.rowEthValue,    &g_ui.rowEthValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Mega1",   &g_ui.rowMega1Value,  &g_ui.rowMega1ValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Mega2",   &g_ui.rowMega2Value,  &g_ui.rowMega2ValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Safety",  &g_ui.rowSafetyValue, &g_ui.rowSafetyValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Warning", &g_ui.rowWarningValue,&g_ui.rowWarningValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Power",   &g_ui.rowPowerValue,  &g_ui.rowPowerValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "Modus",   &g_ui.rowModeValue,   &g_ui.rowModeValueLabel);
+    hmiUiCreateStatusRow(g_ui.systemPanel, "WS/Diag", &g_ui.rowWsDiagValue, &g_ui.rowWsDiagValueLabel);
+}
+
+static void hmiCreateRightWriteUi() {
+    g_ui.lockPanel = hmiUiCreatePanel(g_ui.rightPane, "Schreibrechte", lv_pct(100));
+    g_ui.lockLabel = lv_label_create(g_ui.lockPanel);
+    lv_label_set_text(g_ui.lockLabel, "Bedienung: -");
+    lv_obj_set_width(g_ui.lockLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.lockLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.lockLabel, &lv_font_montserrat_16, 0);
+}
+
+static void hmiCreateRightTrafoUi() {
+    g_ui.trafoPanel = hmiUiCreatePanel(g_ui.rightPane, nullptr, lv_pct(100));
+    lv_obj_set_style_pad_top(g_ui.trafoPanel, 8, 0);
+    lv_obj_set_style_pad_bottom(g_ui.trafoPanel, 8, 0);
+
+    g_ui.trafoLabelA = lv_label_create(g_ui.trafoPanel);
+    lv_obj_set_style_text_font(g_ui.trafoLabelA, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.trafoLabelA, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.trafoLabelA, LV_OPA_COVER, 0);
+    lv_obj_set_width(g_ui.trafoLabelA, lv_pct(100));
+    lv_label_set_long_mode(g_ui.trafoLabelA, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(g_ui.trafoLabelA, "Trafo A10: -");
+
+    g_ui.trafoLabelB = lv_label_create(g_ui.trafoPanel);
+    lv_obj_set_style_text_font(g_ui.trafoLabelB, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.trafoLabelB, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.trafoLabelB, LV_OPA_COVER, 0);
+    lv_obj_set_width(g_ui.trafoLabelB, lv_pct(100));
+    lv_label_set_long_mode(g_ui.trafoLabelB, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(g_ui.trafoLabelB, "Trafo B10: -");
+}
+
+static void hmiCreateRightRetryUi() {
+    g_ui.defectPanel = hmiUiCreatePanel(g_ui.rightPane, "Defekte", lv_pct(100));
+
+    g_ui.m1DefectLabel = lv_label_create(g_ui.defectPanel);
+    lv_obj_set_width(g_ui.m1DefectLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.m1DefectLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.m1DefectLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.m1DefectLabel, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.m1DefectLabel, LV_OPA_COVER, 0);
+    lv_label_set_text(g_ui.m1DefectLabel, "Mega1: Keine Defekte");
+
+    g_ui.m2DefectLabel = lv_label_create(g_ui.defectPanel);
+    lv_obj_set_width(g_ui.m2DefectLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.m2DefectLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.m2DefectLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.m2DefectLabel, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.m2DefectLabel, LV_OPA_COVER, 0);
+    lv_label_set_text(g_ui.m2DefectLabel, "SBHF: Keine Defekte");
+
+    g_ui.defectRow = lv_obj_create(g_ui.defectPanel);
+    lv_obj_set_width(g_ui.defectRow, lv_pct(100));
+    lv_obj_set_height(g_ui.defectRow, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(g_ui.defectRow, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.defectRow, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.defectRow, 0, 0);
+    lv_obj_set_layout(g_ui.defectRow, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.defectRow, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.defectRow, 8, 0);
+    lv_obj_set_style_pad_column(g_ui.defectRow, 12, 0);
+
+    g_ui.m1RetryBtn = hmiUiCreateActionButton(g_ui.defectRow, &g_ui.m1RetryBtnLabel, "MEGA1 RETRY");
+    lv_obj_set_width(g_ui.m1RetryBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.m1RetryBtn, hmiUiOnM1RetryClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.m2RetryBtn = hmiUiCreateActionButton(g_ui.defectRow, &g_ui.m2RetryBtnLabel, "SBHF RETRY");
+    lv_obj_set_width(g_ui.m2RetryBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.m2RetryBtn, hmiUiOnM2RetryClicked, LV_EVENT_CLICKED, nullptr);
+}
+
+static void hmiCreateRightPaneUi(lv_obj_t* split) {
+    g_ui.rightPane = lv_obj_create(split);
+    lv_obj_set_width(g_ui.rightPane, lv_pct(32));
+    lv_obj_set_height(g_ui.rightPane, lv_pct(100));
+    lv_obj_set_style_bg_opa(g_ui.rightPane, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.rightPane, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.rightPane, 0, 0);
+    lv_obj_set_layout(g_ui.rightPane, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.rightPane, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.rightPane, 8, 0);
+
+    hmiCreateRightActionsUi();
+    hmiCreateRightTrafoUi();
+    hmiCreateRightWriteUi();
+    hmiCreateRightStatusUi();
+    hmiCreateRightRetryUi();
+}
+
+static void hmiCreateStartupOverlayUi(lv_obj_t* screen) {
+    g_ui.startupOverlay = lv_obj_create(screen);
+    lv_obj_set_size(g_ui.startupOverlay, lv_pct(100), lv_pct(100));
+    lv_obj_align(g_ui.startupOverlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.startupOverlay, LV_OPA_70, 0);
+    lv_obj_set_style_bg_color(g_ui.startupOverlay, lv_color_black(), 0);
+    lv_obj_set_style_border_width(g_ui.startupOverlay, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.startupOverlay, 0, 0);
+
+    g_ui.startupPanel = lv_obj_create(g_ui.startupOverlay);
+    lv_obj_set_width(g_ui.startupPanel, lv_pct(82));
+    lv_obj_set_height(g_ui.startupPanel, LV_SIZE_CONTENT);
+    lv_obj_center(g_ui.startupPanel);
+    lv_obj_set_style_radius(g_ui.startupPanel, 14, 0);
+    lv_obj_set_style_pad_all(g_ui.startupPanel, 16, 0);
+    lv_obj_set_layout(g_ui.startupPanel, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.startupPanel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(g_ui.startupPanel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.startupPanel, 10, 0);
+
+    g_ui.startupTitle = lv_label_create(g_ui.startupPanel);
+    lv_label_set_text(g_ui.startupTitle, "Systemstart - Checkliste");
+    lv_obj_set_style_text_font(g_ui.startupTitle, &lv_font_montserrat_26, 0);
+
+    g_ui.startupText = lv_label_create(g_ui.startupPanel);
+    lv_label_set_text(g_ui.startupText, "Bitte die folgenden Punkte abarbeiten, bevor Power eingeschaltet werden kann.");
+    lv_obj_set_width(g_ui.startupText, lv_pct(100));
+    lv_label_set_long_mode(g_ui.startupText, LV_LABEL_LONG_WRAP);
+
+    g_ui.startupStatus = lv_label_create(g_ui.startupPanel);
+    lv_obj_set_width(g_ui.startupStatus, lv_pct(100));
+    lv_label_set_long_mode(g_ui.startupStatus, LV_LABEL_LONG_WRAP);
+
+    g_ui.startupM2Btn = hmiUiCreateOverlayButton(g_ui.startupPanel, "SBHF TEST");
+    lv_obj_set_width(g_ui.startupM2Btn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.startupM2Btn, hmiUiOnM2TestClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.startupM1Btn = hmiUiCreateOverlayButton(g_ui.startupPanel, "MEGA1 TEST");
+    lv_obj_set_width(g_ui.startupM1Btn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.startupM1Btn, hmiUiOnM1TestClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.startupAckBtn = hmiUiCreateOverlayButton(g_ui.startupPanel, "QUITTIEREN");
+    lv_obj_set_width(g_ui.startupAckBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.startupAckBtn, hmiUiOnStartupAckClicked, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
+
+    lv_obj_add_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void hmiCreateRetryOverlayUi(lv_obj_t* screen) {
+    g_ui.retryOverlay = lv_obj_create(screen);
+    lv_obj_set_size(g_ui.retryOverlay, lv_pct(100), lv_pct(100));
+    lv_obj_align(g_ui.retryOverlay, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.retryOverlay, LV_OPA_70, 0);
+    lv_obj_set_style_bg_color(g_ui.retryOverlay, lv_color_black(), 0);
+    lv_obj_set_style_border_width(g_ui.retryOverlay, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.retryOverlay, 0, 0);
+
+    g_ui.retryPanel = lv_obj_create(g_ui.retryOverlay);
+    lv_obj_set_width(g_ui.retryPanel, lv_pct(82));
+    lv_obj_set_height(g_ui.retryPanel, LV_SIZE_CONTENT);
+    lv_obj_center(g_ui.retryPanel);
+    lv_obj_set_style_radius(g_ui.retryPanel, 14, 0);
+    lv_obj_set_style_pad_all(g_ui.retryPanel, 16, 0);
+    lv_obj_set_layout(g_ui.retryPanel, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.retryPanel, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(g_ui.retryPanel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.retryPanel, 10, 0);
+
+    g_ui.retryTitle = lv_label_create(g_ui.retryPanel);
+    lv_label_set_text(g_ui.retryTitle, "Weichentest laeuft");
+    lv_obj_set_style_text_font(g_ui.retryTitle, &lv_font_montserrat_26, 0);
+
+    g_ui.retryText = lv_label_create(g_ui.retryPanel);
+    lv_obj_set_width(g_ui.retryText, lv_pct(100));
+    lv_label_set_long_mode(g_ui.retryText, LV_LABEL_LONG_WRAP);
+    lv_label_set_text(g_ui.retryText, "Bitte warten ...");
+
+    g_ui.retryStatus = lv_label_create(g_ui.retryPanel);
+    lv_obj_set_width(g_ui.retryStatus, lv_pct(100));
+    lv_label_set_long_mode(g_ui.retryStatus, LV_LABEL_LONG_WRAP);
+
+    g_ui.retryCloseBtn = hmiUiCreateOverlayButton(g_ui.retryPanel, "AUSBLENDEN");
+    lv_obj_set_width(g_ui.retryCloseBtn, lv_pct(100));
+    lv_obj_add_event_cb(g_ui.retryCloseBtn, hmiUiOnRetryCloseClicked, LV_EVENT_CLICKED, nullptr);
+    lv_obj_add_flag(g_ui.retryOverlay, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void hmiCreateOverlayUi(lv_obj_t* screen) {
+    hmiCreateStartupOverlayUi(screen);
+    hmiCreateRetryOverlayUi(screen);
+}
+
+static void hmiCreateLeftTabsChrome() {
+    g_ui.leftTabview = lv_tabview_create(g_ui.mainContent, LV_DIR_TOP, 40);
+    lv_obj_set_width(g_ui.leftTabview, lv_pct(100));
+    lv_obj_set_flex_grow(g_ui.leftTabview, 1);
+    lv_obj_set_style_bg_opa(g_ui.leftTabview, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.leftTabview, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.leftTabview, 0, 0);
+
+    g_ui.tabWeichen   = lv_tabview_add_tab(g_ui.leftTabview, "Weichen");
+    g_ui.tabBahnhoefe = lv_tabview_add_tab(g_ui.leftTabview, "Bahnhoefe");
+    g_ui.tabBlocks    = lv_tabview_add_tab(g_ui.leftTabview, "Bloecke");
+    g_ui.tabDebug     = lv_tabview_add_tab(g_ui.leftTabview, "Debug");
+
+    lv_tabview_set_act(g_ui.leftTabview, 0, LV_ANIM_OFF);
+
+    lv_obj_t* tabBtns = lv_tabview_get_tab_btns(g_ui.leftTabview);
+    if (tabBtns) {
+        lv_obj_set_style_bg_color(tabBtns, lv_palette_darken(LV_PALETTE_GREY, 4), 0);
+        lv_obj_set_style_bg_opa(tabBtns, LV_OPA_COVER, 0);
+        lv_obj_set_style_border_width(tabBtns, 0, 0);
+        lv_obj_set_style_pad_all(tabBtns, 2, 0);
+        lv_obj_set_style_outline_width(tabBtns, 0, 0);
+
+        lv_obj_set_style_bg_color(tabBtns, lv_palette_darken(LV_PALETTE_GREY, 3), LV_PART_ITEMS);
+        lv_obj_set_style_bg_opa(tabBtns, LV_OPA_COVER, LV_PART_ITEMS);
+        lv_obj_set_style_text_color(tabBtns, lv_color_white(), LV_PART_ITEMS);
+        lv_obj_set_style_border_width(tabBtns, 0, LV_PART_ITEMS);
+
+        lv_obj_set_style_bg_color(tabBtns, lv_palette_main(LV_PALETTE_BLUE), LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_bg_opa(tabBtns, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
+        lv_obj_set_style_text_color(tabBtns, lv_color_white(), LV_PART_ITEMS | LV_STATE_CHECKED);
+    }
+
+    lv_obj_t* tabContent = lv_tabview_get_content(g_ui.leftTabview);
+    if (tabContent) {
+        lv_obj_set_style_bg_opa(tabContent, LV_OPA_TRANSP, 0);
+        lv_obj_set_style_border_width(tabContent, 0, 0);
+        lv_obj_set_style_pad_all(tabContent, 0, 0);
+    }
+}
+
+static void hmiCreateBlocksTabUi() {
+    lv_obj_set_style_pad_all(g_ui.tabBlocks, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.tabBlocks, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.tabBlocks, 0, 0);
+    lv_obj_set_style_outline_width(g_ui.tabBlocks, 0, 0);
+    lv_obj_set_layout(g_ui.tabBlocks, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.tabBlocks, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.tabBlocks, 6, 0);
+
+    g_ui.blocksTabTitle = lv_label_create(g_ui.tabBlocks);
+    lv_label_set_text(g_ui.blocksTabTitle, "Blockbelegung");
+    lv_obj_set_style_text_font(g_ui.blocksTabTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.blocksTabTitle, lv_color_white(), 0);
+
+    g_ui.blocksTabLabel = lv_label_create(g_ui.tabBlocks);
+    lv_obj_set_width(g_ui.blocksTabLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.blocksTabLabel, LV_LABEL_LONG_WRAP);
+    lv_label_set_recolor(g_ui.blocksTabLabel, true);
+    lv_obj_set_style_text_font(g_ui.blocksTabLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.blocksTabLabel, lv_color_white(), 0);
+
+    char initBlocksBuf[1024];
+    hmiBuildBlocksTabText(initBlocksBuf, sizeof(initBlocksBuf));
+    lv_label_set_text(g_ui.blocksTabLabel, initBlocksBuf);
+}
+
+static void hmiCreateDebugTabUi() {
+    lv_obj_set_style_pad_all(g_ui.tabDebug, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.tabDebug, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.tabDebug, 0, 0);
+    lv_obj_set_style_outline_width(g_ui.tabDebug, 0, 0);
+    lv_obj_set_layout(g_ui.tabDebug, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.tabDebug, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.tabDebug, 6, 0);
+
+    g_ui.debugTabTitle = lv_label_create(g_ui.tabDebug);
+    lv_label_set_text(g_ui.debugTabTitle, "Debug");
+    lv_obj_set_style_text_font(g_ui.debugTabTitle, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.debugTabTitle, lv_color_white(), 0);
+
+    g_ui.debugTabLabel = lv_label_create(g_ui.tabDebug);
+    lv_obj_set_width(g_ui.debugTabLabel, lv_pct(100));
+    lv_label_set_long_mode(g_ui.debugTabLabel, LV_LABEL_LONG_WRAP);
+    lv_obj_set_style_text_font(g_ui.debugTabLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.debugTabLabel, lv_color_white(), 0);
+    lv_label_set_text(g_ui.debugTabLabel, "Debug-Tab bereit.");
+}
+
+static void hmiCreateBahnhofTabUi() {
+    lv_obj_set_style_pad_all(g_ui.tabBahnhoefe, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.tabBahnhoefe, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.tabBahnhoefe, 0, 0);
+    lv_obj_set_style_outline_width(g_ui.tabBahnhoefe, 0, 0);
+    lv_obj_set_layout(g_ui.tabBahnhoefe, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.tabBahnhoefe, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.tabBahnhoefe, 6, 0);
+
+    g_ui.bahnhofPanel = hmiUiCreatePanel(g_ui.tabBahnhoefe, "Bahnhoefe", lv_pct(100));
+    lv_obj_set_style_pad_all(g_ui.bahnhofPanel, 8, 0);
+    lv_obj_set_style_pad_row(g_ui.bahnhofPanel, 6, 0);
+
+    g_ui.bahnhofGrid = lv_obj_create(g_ui.bahnhofPanel);
+    lv_obj_set_width(g_ui.bahnhofGrid, lv_pct(100));
+    lv_obj_set_height(g_ui.bahnhofGrid, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(g_ui.bahnhofGrid, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.bahnhofGrid, 0, 0);
+    lv_obj_set_layout(g_ui.bahnhofGrid, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.bahnhofGrid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(
+        g_ui.bahnhofGrid,
+        LV_FLEX_ALIGN_START,
+        LV_FLEX_ALIGN_START,
+        LV_FLEX_ALIGN_START
+    );
+    lv_obj_set_style_pad_column(g_ui.bahnhofGrid, 8, 0);
+    lv_obj_set_style_pad_row(g_ui.bahnhofGrid, 6, 0);
+
+    for (uint8_t i = 0; i < 4u; ++i) {
+        char leftText[16];
+        snprintf(leftText, sizeof(leftText), "BHF%u", (unsigned)i);
+        hmiUiCreateBahnhofItem(
+            g_ui.bahnhofGrid,
+            &g_ui.bahnhofItem[i],
+            leftText,
+            &g_ui.bahnhofStateCell[i],
+            &g_ui.bahnhofLedGreen[i],
+            &g_ui.bahnhofLedRed[i],
+            &g_ui.bahnhofToggleBtn[i],
+            &g_ui.bahnhofToggleBtnLabel[i],
+            i
+        );
+    }
+}
+
+static void hmiCreateWeichenTabUi() {
+    lv_obj_set_style_pad_all(g_ui.tabWeichen, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.tabWeichen, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.tabWeichen, 0, 0);
+    lv_obj_set_style_outline_width(g_ui.tabWeichen, 0, 0);
+    lv_obj_set_layout(g_ui.tabWeichen, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.tabWeichen, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.tabWeichen, 6, 0);
+
+    g_ui.weichePanel = hmiUiCreatePanel(g_ui.tabWeichen, "Mega1-Weichen", lv_pct(100));
+    lv_obj_set_style_pad_all(g_ui.weichePanel, 8, 0);
+    lv_obj_set_style_pad_row(g_ui.weichePanel, 6, 0);
+    lv_obj_set_height(g_ui.weichePanel, LV_SIZE_CONTENT);
+
+    g_ui.weicheGrid = lv_obj_create(g_ui.weichePanel);
+    lv_obj_set_width(g_ui.weicheGrid, lv_pct(100));
+    lv_obj_set_height(g_ui.weicheGrid, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(g_ui.weicheGrid, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.weicheGrid, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.weicheGrid, 0, 0);
+    lv_obj_set_layout(g_ui.weicheGrid, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.weicheGrid, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(g_ui.weicheGrid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.weicheGrid, 6, 0);
+    lv_obj_clear_flag(g_ui.weicheGrid, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (uint8_t row = 0; row < 3u; ++row) {
+        g_ui.mega1WeicheSummaryLabel[row] = lv_label_create(g_ui.weicheGrid);
+        lv_obj_set_width(g_ui.mega1WeicheSummaryLabel[row], lv_pct(100));
+        lv_label_set_recolor(g_ui.mega1WeicheSummaryLabel[row], true);
+        lv_label_set_long_mode(g_ui.mega1WeicheSummaryLabel[row], LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_font(g_ui.mega1WeicheSummaryLabel[row], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(g_ui.mega1WeicheSummaryLabel[row], lv_color_white(), 0);
+    }
+    lv_label_set_text(g_ui.mega1WeicheSummaryLabel[0], "W0 -/-   W1 -/-   W2 -/-   W3 -/-");
+    lv_label_set_text(g_ui.mega1WeicheSummaryLabel[1], "W4 -/-   W5 -/-   W6 -/-   W7 -/-");
+    lv_label_set_text(g_ui.mega1WeicheSummaryLabel[2], "W8 -/-   W9 -/-   W10 -/-   W11 -/-");
+
+    lv_obj_t* sbhfPanel = hmiUiCreatePanel(g_ui.tabWeichen, "SBHF-Weichen", lv_pct(100));
+    lv_obj_set_style_pad_all(sbhfPanel, 8, 0);
+    lv_obj_set_style_pad_row(sbhfPanel, 6, 0);
+    for (uint8_t row = 0; row < 2u; ++row) {
+        g_ui.sbhfSummaryLabel[row] = lv_label_create(sbhfPanel);
+        lv_obj_set_width(g_ui.sbhfSummaryLabel[row], lv_pct(100));
+        lv_label_set_recolor(g_ui.sbhfSummaryLabel[row], true);
+        lv_label_set_long_mode(g_ui.sbhfSummaryLabel[row], LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_font(g_ui.sbhfSummaryLabel[row], &lv_font_montserrat_16, 0);
+        lv_obj_set_style_text_color(g_ui.sbhfSummaryLabel[row], lv_color_white(), 0);
+        lv_label_set_text(
+            g_ui.sbhfSummaryLabel[row],
+            row == 0 ? "W12 I:- S:-   |   W13 I:- S:-" : "W14 I:- S:-   |   W15 I:- S:-"
+        );
+    }
+}
+
+static void hmiCreateLeftStatusPlaceholdersUi() {
+    g_ui.statusLabel = lv_label_create(g_ui.leftPane);
+    lv_obj_add_flag(g_ui.statusLabel, LV_OBJ_FLAG_HIDDEN);
+
+    g_ui.detailLabel = lv_label_create(g_ui.leftPane);
+    lv_obj_add_flag(g_ui.detailLabel, LV_OBJ_FLAG_HIDDEN);
+}
+
+static void hmiCreateLeftPaneUi(lv_obj_t* split) {
+    g_ui.leftPane = lv_obj_create(split);
+    lv_obj_set_width(g_ui.leftPane, lv_pct(68));
+    lv_obj_set_flex_grow(g_ui.leftPane, 1);
+    lv_obj_set_height(g_ui.leftPane, lv_pct(100));
+    lv_obj_set_style_bg_opa(g_ui.leftPane, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.leftPane, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.leftPane, 0, 0);
+    lv_obj_set_layout(g_ui.leftPane, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.leftPane, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_style_pad_row(g_ui.leftPane, 6, 0);
+
+    g_ui.mainContent = lv_obj_create(g_ui.leftPane);
+    lv_obj_set_width(g_ui.mainContent, lv_pct(100));
+    lv_obj_set_flex_grow(g_ui.mainContent, 1);
+    lv_obj_set_style_bg_color(g_ui.mainContent, lv_palette_darken(LV_PALETTE_GREY, 4), 0);
+    lv_obj_set_style_bg_opa(g_ui.mainContent, LV_OPA_COVER, 0);
+    lv_obj_set_style_border_width(g_ui.mainContent, 1, 0);
+    lv_obj_set_style_border_color(g_ui.mainContent, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
+    lv_obj_set_style_radius(g_ui.mainContent, 8, 0);
+    lv_obj_set_style_pad_all(g_ui.mainContent, 10, 0);
+    lv_obj_set_layout(g_ui.mainContent, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.mainContent, LV_FLEX_FLOW_COLUMN);
+
+    hmiCreateLeftTabsChrome();
+    hmiCreateWeichenTabUi();
+    hmiCreateBahnhofTabUi();
+    hmiCreateBlocksTabUi();
+    hmiCreateDebugTabUi();
+
+    // Alte Status-Labels bleiben nur als harmlose Platzhalter bestehen,
+    // damit kein Layout-Risiko entsteht.
+    hmiCreateLeftStatusPlaceholdersUi();
+}
+
+static lv_obj_t* hmiCreateMainSplitUi() {
+    g_ui.title = lv_label_create(g_ui.root);
+    lv_label_set_text(g_ui.title, "Elektrische Eisenbahn HMI");
+    lv_obj_set_style_text_font(g_ui.title, &lv_font_montserrat_26, 0);
+    lv_obj_set_style_text_color(g_ui.title, lv_color_white(), 0);
+
+    lv_obj_t* split = lv_obj_create(g_ui.root);
+    lv_obj_set_width(split, lv_pct(100));
+    lv_obj_set_flex_grow(split, 1);
+    lv_obj_set_style_bg_opa(split, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(split, 0, 0);
+    lv_obj_set_style_pad_all(split, 0, 0);
+    lv_obj_set_layout(split, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(split, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_pad_column(split, 8, 0);
+
+    return split;
+}
+
+static void createMainUi() {
+    lv_obj_t* screen = lv_scr_act();
+
+    g_ui.root = lv_obj_create(screen);
+    lv_obj_set_size(g_ui.root, lv_pct(100), lv_pct(100));
+    lv_obj_align(g_ui.root, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_set_style_bg_opa(g_ui.root, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.root, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.root, 12, 0);
+    lv_obj_set_layout(g_ui.root, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.root, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_flex_align(g_ui.root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_row(g_ui.root, 10, 0);
+
+    lv_obj_t* split = hmiCreateMainSplitUi();
+
+    hmiCreateLeftPaneUi(split);
+    hmiCreateRightPaneUi(split);
+    hmiCreateOverlayUi(screen);
+
+    hmiUiUpdate();
+}
+
 static void hmiUiSetButtonEnabled(lv_obj_t* btn, lv_obj_t* label, bool enabled, const char* text) {
     if (!btn) return;
 
@@ -1277,6 +2049,15 @@ static void hmiStartupOverlayUpdate() {
     const uint32_t now = millis();
     static constexpr uint32_t OVERLAY_DISABLE_DEBOUNCE_MS = 450;
 
+    // WICHTIG:
+    // Lokale Pending-Latches ueberbruecken die Zeit zwischen Button-Klick
+    // und Rueckmeldung aus dem authoritative State.
+    // Dadurch fuehlt sich das Overlay stabil an und Buttons kippen nicht
+    // sofort wieder in den alten Zustand zurueck.
+    //
+    // Zurueckgenommen werden die Pending-Flags erst dann, wenn der
+    // authoritative State den Fortschritt bzw. Abschluss wirklich zeigt.
+
     // Pending-Latches zurücknehmen, sobald der authoritative State sichtbar zeigt,
     // dass die Aktion angekommen ist bzw. der Zustand weitergelaufen ist.
     if (g_pendingStartupM1) {
@@ -1309,6 +2090,15 @@ static void hmiStartupOverlayUpdate() {
         return;
     }
 
+    // "Priming":
+    // Beim ersten Sichtbarwerden des Overlays wird es nur eingeblendet.
+    // Die eigentlichen Text-/Button-Updates folgen bewusst erst im
+    // naechsten regulaeren UI-Zyklus.
+    //
+    // Das reduziert den Erstaufbau in genau dem Moment, in dem das Overlay
+    // sichtbar wird, und war Teil des Fixes gegen White-Screen/Flicker/
+    // instabile Overlay-Aktualisierung.
+
     if (!g_startupOverlayPrimed) {
         // Beim ersten Aktivieren nur sichtbar machen.
         // Text-/Button-Updates folgen erst im naechsten regulaeren UI-Zyklus.
@@ -1325,6 +2115,14 @@ static void hmiStartupOverlayUpdate() {
     const bool rawCanM2 =
         hmiCanSendM2TestNow() && (!g_pendingStartupM2);
     const bool rawCanAck =
+
+        // "rawCan*" sind die unmittelbaren fachlichen Freigaben.
+        // Sie werden anschliessend nicht 1:1 angezeigt, sondern ueber
+        // sichtbarkeitsstabile Overlay-Flags entprellt.
+        //
+        // Ziel: Kurzzeitige Zustandswechsel im Backend sollen nicht sofort
+        // als sichtbares Button-Flackern beim Nutzer landen.
+
         hmiCanSendStartupConfirmNow() && (!g_pendingStartupAck);
 
     // Nur wirklich eigene, stabile Gründe sofort hart deaktivieren.
@@ -1463,869 +2261,6 @@ static void hmiRetryOverlayUpdate() {
     lv_label_set_text(g_ui.retryStatus, buf);
 }
 
-static void hmiUiUpdate() {
-    if (!g_ui.powerBtn || !g_ui.powerOffBtn || !g_ui.autoBtn) {
-        return;
-    }
-
-    // Overlay-Guard:
-    // Wenn ein Overlay aktiv ist, nur die Overlays selbst aktualisieren und
-    // den restlichen UI-Refresh fuer diesen Zyklus komplett auslassen.
-    // So laufen nicht Mega1-/Rechtsseiten-Updates parallel zum Overlay.
-    if (hmiStartupOverlayActive() || hmiRetryOverlayActive()) {
-        hmiStartupOverlayUpdate();
-        hmiRetryOverlayUpdate();
-        g_overlayCacheInit = false;
-        return;
-    }
-
-    const bool canM1Test = hmiCanSendM1TestNow();
-    const bool canM2Test = hmiCanSendM2TestNow();
-    const bool canPowerOn = hmiCanSendPowerNow();
-    const bool canPowerOff = hmiCanSendPowerOffNow();
-    const bool canAuto = hmiCanSendAutoNow();
-    const bool canManual = hmiCanSendManualNow();
-    const bool canWrite = g_dbg.actionCanWrite;
-    const bool diagLease = g_dbg.diagActive;
-    const bool autoIsEnabled = g_dbg.mega1ModeAuto ? canManual : canAuto;
-    const uint32_t activeLeftTab =
-        g_ui.leftTabview ? (uint32_t)lv_tabview_get_tab_act(g_ui.leftTabview) : 0u;
-    const bool updateWeichenTab = (activeLeftTab == 0u);
-    const bool updateBahnhofTab = (activeLeftTab == 1u);
-    const bool updateBlocksTab = (activeLeftTab == 2u);
-    const bool updateDebugTab = (activeLeftTab == 3u);
-    const bool enteringBlocksTab = (activeLeftTab == 2u) && (g_lastActiveLeftTab != 2u);
-
-    char systemBuf[64];
-    char ethBuf[96];
-    char wsBuf[32];
-    char m1Buf[48];
-    char m2Buf[48];
-    char modeBuf[32];
-    char powerBuf[32];
-    bool systemWarn = false;
-    bool m1Warn = false;
-    bool m2Warn = false;
-    
-    char safetyValue[40];
-    char warningValue[20];
-    char wsDiagValue[48];
-    char lockValue[96];
-    char ethValue[64];
-    char trafoABuf[40];
-    char trafoBBuf[40];
-    char m2DefectBuf[96];
-    char m1DefectBuf[96];
-
-    const bool safetyWarn = g_dbg.safetyLock || g_dbg.safetyAckRequired || g_dbg.safetyNotausActive;
-
-    hmiUiBuildStatusTexts(
-        systemBuf, sizeof(systemBuf),
-        ethBuf, sizeof(ethBuf),
-        wsBuf, sizeof(wsBuf),
-        m1Buf, sizeof(m1Buf),
-        m2Buf, sizeof(m2Buf),
-        modeBuf, sizeof(modeBuf),
-        powerBuf, sizeof(powerBuf),
-        &systemWarn, &m1Warn, &m2Warn
-    );
-
-    const bool showM2Defect = hmiHasMega2Defects();
-    const bool showM1Defect = hmiHasMega1Defects();
-    const bool warningActive = g_dbg.summaryWarningPresent || showM1Defect || showM2Defect || safetyWarn || m1Warn || m2Warn;
-
-    if (g_dbg.safetyNotausActive) {
-        snprintf(safetyValue, sizeof(safetyValue), "NOT-AUS");
-    } else if (g_dbg.safetyAckRequired) {
-        snprintf(safetyValue, sizeof(safetyValue), "ACK");
-    } else if (g_dbg.safetyLock) {
-        snprintf(safetyValue, sizeof(safetyValue), "LOCK");
-    } else {
-        snprintf(safetyValue, sizeof(safetyValue), "OK");
-    }
-    snprintf(warningValue, sizeof(warningValue), "%s", warningActive ? "AKTIV" : "AUS");
-    snprintf(wsDiagValue, sizeof(wsDiagValue), "%lu / %s",
-             (unsigned long)g_dbg.wsClients,
-             diagLease ? "LEASE" : "FREI");
-    if (canWrite) {
-        snprintf(lockValue, sizeof(lockValue), "Bedienung frei");
-    } else if (diagLease && g_dbg.diagOwner[0] && strcmp(g_dbg.diagOwner, "-") != 0) {
-        snprintf(lockValue, sizeof(lockValue), "Bedienung gesperrt (Diag: %s)", g_dbg.diagOwner);
-    } else if (diagLease) {
-        snprintf(lockValue, sizeof(lockValue), "Bedienung gesperrt (Diag-Lease)");
-    } else {
-        snprintf(lockValue, sizeof(lockValue), "Bedienung gesperrt");
-    }
-
-    if (g_dbg.ethConnected) {
-        if (g_dbg.ethIp[0] != '\0' && strcmp(g_dbg.ethIp, "-") != 0) {
-            snprintf(ethValue, sizeof(ethValue), "%s", g_dbg.ethIp);
-        } else {
-            snprintf(ethValue, sizeof(ethValue), "-");
-        }
-    } else {
-        snprintf(ethValue, sizeof(ethValue), "OFFLINE");
-    }
-
-    snprintf(trafoABuf, sizeof(trafoABuf), "Trafo oben: %u.%u V", (unsigned)(g_dbg.analogVA10 / 10u), (unsigned)(g_dbg.analogVA10 % 10u));
-    snprintf(trafoBBuf, sizeof(trafoBBuf), "Trafo unten: %u.%u V", (unsigned)(g_dbg.analogVB10 / 10u), (unsigned)(g_dbg.analogVB10 % 10u));
-    snprintf(m2DefectBuf, sizeof(m2DefectBuf), showM2Defect ? "SBHF: %s" : "SBHF: Keine Defekte", g_dbg.mega2DefectList);
-    snprintf(m1DefectBuf, sizeof(m1DefectBuf), showM1Defect ? "Mega1: %s" : "Mega1: Keine Defekte", g_dbg.mega1DefectList);
-
-    const bool showDefectRow = (showM1Defect || showM2Defect);
-
-    if (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.ethValue, ethValue)) {
-        hmiUiSetStatusCell(g_ui.rowEthValue, g_ui.rowEthValueLabel,
-                     ethValue,
-                     g_dbg.ethConnected ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED));
-        copyStr(g_rightPanelRenderCache.ethValue, sizeof(g_rightPanelRenderCache.ethValue), ethValue);
-    }
-    const char* mega1Value = !g_dbg.mega1Online ? "OFFLINE" : (m1Warn ? "WARNUNG" : "ONLINE");
-    if (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.mega1Value, mega1Value)) {
-        hmiUiSetStatusCell(g_ui.rowMega1Value, g_ui.rowMega1ValueLabel,
-                     mega1Value,
-                     !g_dbg.mega1Online ? lv_palette_main(LV_PALETTE_RED)
-                                        : (m1Warn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN)));
-        copyStr(g_rightPanelRenderCache.mega1Value, sizeof(g_rightPanelRenderCache.mega1Value), mega1Value);
-    }
-    const char* mega2Value = !g_dbg.mega2Online ? "OFFLINE" : (m2Warn ? "WARNUNG" : "ONLINE");
-    if (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.mega2Value, mega2Value)) {
-        hmiUiSetStatusCell(g_ui.rowMega2Value, g_ui.rowMega2ValueLabel,
-                     mega2Value,
-                     !g_dbg.mega2Online ? lv_palette_main(LV_PALETTE_RED)
-                                        : (m2Warn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN)));
-        copyStr(g_rightPanelRenderCache.mega2Value, sizeof(g_rightPanelRenderCache.mega2Value), mega2Value);
-    }
-    if (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.safetyValue, safetyValue)) {
-        hmiUiSetStatusCell(g_ui.rowSafetyValue, g_ui.rowSafetyValueLabel,
-                     safetyValue,
-                     safetyWarn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN));
-        copyStr(g_rightPanelRenderCache.safetyValue, sizeof(g_rightPanelRenderCache.safetyValue), safetyValue);
-    }
-    if (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.warningValue, warningValue)) {
-        hmiUiSetStatusCell(g_ui.rowWarningValue, g_ui.rowWarningValueLabel,
-                     warningValue,
-                     warningActive ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_darken(LV_PALETTE_GREY, 2));
-        copyStr(g_rightPanelRenderCache.warningValue, sizeof(g_rightPanelRenderCache.warningValue), warningValue);
-    }
-    const char* powerValue = g_dbg.safetyPowerOn ? "AN" : "AUS";
-    if (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.powerValue, powerValue)) {
-        hmiUiSetStatusCell(g_ui.rowPowerValue, g_ui.rowPowerValueLabel,
-                     powerValue,
-                     g_dbg.safetyPowerOn ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_darken(LV_PALETTE_GREY, 2));
-        copyStr(g_rightPanelRenderCache.powerValue, sizeof(g_rightPanelRenderCache.powerValue), powerValue);
-    }
-    const char* modeValue = g_dbg.mega1ModeAuto ? "AUTO" : "MANUELL";
-    if (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.modeValue, modeValue)) {
-        hmiUiSetStatusCell(g_ui.rowModeValue, g_ui.rowModeValueLabel,
-                     modeValue,
-                     g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_BLUE));
-        copyStr(g_rightPanelRenderCache.modeValue, sizeof(g_rightPanelRenderCache.modeValue), modeValue);
-    }
-    if (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.wsDiagValue, wsDiagValue)) {
-        hmiUiSetStatusCell(g_ui.rowWsDiagValue, g_ui.rowWsDiagValueLabel,
-                     wsDiagValue,
-                     (g_dbg.wsClients > 0) ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_darken(LV_PALETTE_GREY, 2));
-        copyStr(g_rightPanelRenderCache.wsDiagValue, sizeof(g_rightPanelRenderCache.wsDiagValue), wsDiagValue);
-    }
-
-    hmiUiSetButtonEnabled(
-        g_ui.powerBtn,
-        g_ui.powerBtnLabel,
-        canPowerOn,
-        "POWER ON"
-    );
-    hmiUiSetButtonEnabled(
-        g_ui.powerOffBtn,
-        g_ui.powerOffBtnLabel,
-        canPowerOff,
-        "STOP / POWER OFF"
-    );
-    hmiUiSetButtonEnabled(
-        g_ui.autoBtn,
-        g_ui.autoBtnLabel,
-        autoIsEnabled,
-        g_dbg.mega1ModeAuto ? "MANUELL" : "AUTO"
-    );
-
-    hmiUiSetActionButtonColor(g_ui.powerBtn, lv_palette_main(LV_PALETTE_GREEN));
-    hmiUiSetActionButtonColor(g_ui.powerOffBtn, lv_palette_main(LV_PALETTE_RED));
-    hmiUiSetActionButtonColor(g_ui.autoBtn,
-        g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_BLUE)
-                            : lv_palette_main(LV_PALETTE_GREEN));
-
-    if (g_ui.powerLed &&
-        (!g_rightPanelRenderCache.init ||
-         g_rightPanelRenderCache.powerLedOn != g_dbg.safetyPowerOn)) {
-        const lv_color_t c = g_dbg.safetyPowerOn ? lv_palette_main(LV_PALETTE_GREEN)
-                                                 : lv_palette_darken(LV_PALETTE_GREY, 2);
-        lv_obj_set_style_bg_color(g_ui.powerLed, c, 0);
-        lv_obj_set_style_border_color(g_ui.powerLed, c, 0);
-        lv_obj_set_style_shadow_color(g_ui.powerLed, c, 0);
-        lv_obj_set_style_shadow_opa(g_ui.powerLed, g_dbg.safetyPowerOn ? LV_OPA_70 : LV_OPA_30, 0);
-        g_rightPanelRenderCache.powerLedOn = g_dbg.safetyPowerOn;
-    }
-    
-    if (g_ui.autoLed &&
-        (!g_rightPanelRenderCache.init ||
-         g_rightPanelRenderCache.modeLedOn != g_dbg.mega1ModeAuto)) {
-        const lv_color_t c = g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_GREEN)
-                                                 : lv_palette_darken(LV_PALETTE_GREY, 2);
-        lv_obj_set_style_bg_color(g_ui.autoLed, c, 0);
-        lv_obj_set_style_border_color(g_ui.autoLed, c, 0);
-        lv_obj_set_style_shadow_color(g_ui.autoLed, c, 0);
-        lv_obj_set_style_shadow_opa(g_ui.autoLed, g_dbg.mega1ModeAuto ? LV_OPA_70 : LV_OPA_30, 0);
-        g_rightPanelRenderCache.modeLedOn = g_dbg.mega1ModeAuto;
-    }
-
-    if (g_ui.lockLabel && (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.lockValue, lockValue))) {
-        lv_label_set_text(g_ui.lockLabel, lockValue);
-        lv_obj_set_style_text_color(
-            g_ui.lockLabel,
-            canWrite ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_ORANGE),
-            0
-        );
-        copyStr(g_rightPanelRenderCache.lockValue, sizeof(g_rightPanelRenderCache.lockValue), lockValue);
-    }
-    if (g_ui.m1DefectLabel && (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.m1DefectBuf, m1DefectBuf))) {
-        lv_label_set_text(g_ui.m1DefectLabel, m1DefectBuf);
-        copyStr(g_rightPanelRenderCache.m1DefectBuf, sizeof(g_rightPanelRenderCache.m1DefectBuf), m1DefectBuf);
-    }
-    if (g_ui.m2DefectLabel && (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.m2DefectBuf, m2DefectBuf))) {
-        lv_label_set_text(g_ui.m2DefectLabel, m2DefectBuf);
-        copyStr(g_rightPanelRenderCache.m2DefectBuf, sizeof(g_rightPanelRenderCache.m2DefectBuf), m2DefectBuf);
-    }
-
-    if (g_ui.detailLabel) {
-        lv_label_set_text(g_ui.detailLabel, "");
-    }
-
-    if (g_ui.defectPanel) {
-        lv_obj_clear_flag(g_ui.defectPanel, LV_OBJ_FLAG_HIDDEN);
-    }
-
-    if (!g_rightPanelRenderCache.init || g_rightPanelRenderCache.showDefectRow != showDefectRow) {
-        if (showDefectRow && g_ui.defectRow) {
-            lv_obj_clear_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
-        } else if (g_ui.defectRow) {
-            lv_obj_add_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
-        }
-        g_rightPanelRenderCache.showDefectRow = showDefectRow;
-    }
-
-    hmiUiSetButtonEnabled(
-        g_ui.m2RetryBtn,
-        g_ui.m2RetryBtnLabel,
-        showM2Defect && hmiCanSendM2RetryNow(),
-        "SBHF RETRY"
-    );
-    hmiUiSetButtonEnabled(
-        g_ui.m1RetryBtn,
-        g_ui.m1RetryBtnLabel,
-        showM1Defect && hmiCanSendM1RetryNow(),
-        "MEGA1 RETRY"
-    );
-    hmiUiSetActionButtonColor(g_ui.m2RetryBtn, lv_palette_main(LV_PALETTE_BLUE));
-    hmiUiSetActionButtonColor(g_ui.m1RetryBtn, lv_palette_main(LV_PALETTE_BLUE));
-
-    if (updateBahnhofTab) for (uint8_t i = 0; i < 4u; ++i) {
-        const bool isOn = ((g_dbg.mega1BahnhofMask & (1u << i)) != 0u);
-        const bool valid = g_dbg.mega1Online;
-        const bool canToggle = hmiCanSendBhfPowerNow();
-
-        if (g_ui.bahnhofLedGreen[i] && g_ui.bahnhofLedRed[i]) {
-            const bool changed =
-                !g_bahnhofRenderCache[i].init ||
-                g_bahnhofRenderCache[i].valid != valid ||
-                g_bahnhofRenderCache[i].isOn != isOn;
-
-            if (changed) {
-                lv_color_t colGreen;
-                lv_color_t colRed;
-
-                if (!valid) {
-                    colGreen = lv_palette_main(LV_PALETTE_GREY);
-                    colRed   = lv_palette_main(LV_PALETTE_GREY);
-                }
-                else if (isOn) {
-                    colGreen = lv_palette_main(LV_PALETTE_GREEN);
-                    colRed   = lv_palette_main(LV_PALETTE_GREY);
-                }
-                else {
-                    colGreen = lv_palette_main(LV_PALETTE_GREY);
-                    colRed   = lv_palette_main(LV_PALETTE_RED);
-                }
-
-                lv_obj_set_style_bg_color(g_ui.bahnhofLedGreen[i], colGreen, 0);
-                lv_obj_set_style_border_color(g_ui.bahnhofLedGreen[i], colGreen, 0);
-                lv_obj_set_style_bg_opa(g_ui.bahnhofLedGreen[i], LV_OPA_COVER, 0);
-                lv_obj_set_style_shadow_color(g_ui.bahnhofLedGreen[i], colGreen, 0);
-                lv_obj_set_style_shadow_opa(g_ui.bahnhofLedGreen[i], valid && isOn ? LV_OPA_70 : LV_OPA_30, 0);
-
-                lv_obj_set_style_bg_color(g_ui.bahnhofLedRed[i], colRed, 0);
-                lv_obj_set_style_border_color(g_ui.bahnhofLedRed[i], colRed, 0);
-                lv_obj_set_style_bg_opa(g_ui.bahnhofLedRed[i], LV_OPA_COVER, 0);
-                lv_obj_set_style_shadow_color(g_ui.bahnhofLedRed[i], colRed, 0);
-                lv_obj_set_style_shadow_opa(g_ui.bahnhofLedRed[i], valid && !isOn ? LV_OPA_70 : LV_OPA_30, 0);
-            }
-        }
-
-        if (g_ui.bahnhofToggleBtn[i] && g_ui.bahnhofToggleBtnLabel[i]) {
-            const bool changed =
-                !g_bahnhofRenderCache[i].init ||
-                g_bahnhofRenderCache[i].isOn != isOn ||
-                g_bahnhofRenderCache[i].canToggle != canToggle;
-
-            if (changed) {
-                char btnText[16];
-                snprintf(btnText, sizeof(btnText), isOn ? "AUS" : "EIN");
-
-                hmiUiSetButtonEnabled(
-                    g_ui.bahnhofToggleBtn[i],
-                    g_ui.bahnhofToggleBtnLabel[i],
-                    canToggle,
-                    btnText
-                );
-
-                hmiUiSetActionButtonColor(
-                    g_ui.bahnhofToggleBtn[i],
-                    lv_palette_main(LV_PALETTE_BLUE)
-                );
-            }
-        }
-
-        g_bahnhofRenderCache[i].init = true;
-        g_bahnhofRenderCache[i].valid = valid;
-        g_bahnhofRenderCache[i].isOn = isOn;
-        g_bahnhofRenderCache[i].canToggle = canToggle;
-    }
-
-    if (updateWeichenTab) {
-        const bool valid = g_dbg.mega1Online;
-
-        if (g_ui.mega1WeicheSummaryLabel[0] &&
-            g_ui.mega1WeicheSummaryLabel[1] &&
-            g_ui.mega1WeicheSummaryLabel[2]) {
-            for (uint8_t row = 0; row < 3u; ++row) {
-                char rowBuf[192];
-                rowBuf[0] = '\0';
-                for (uint8_t col = 0; col < 4u; ++col) {
-                    const uint8_t i = (uint8_t)(row * 4u + col);
-                    const char istChar  = !valid ? '-' : (((g_dbg.mega1WeicheIstGeradeBits  & (1u << i)) != 0u) ? 'G' : 'A');
-                    const char sollChar = !valid ? '-' : (((g_dbg.mega1WeicheSollGeradeBits & (1u << i)) != 0u) ? 'G' : 'A');
-                    const bool mismatch = valid && (istChar != sollChar);
-                    char part[48];
-
-                    // bessere Ausrichtung:
-                    // W0–W9 -> gleiche Breite wie W10/W11
-                    if (i < 10) {
-                        snprintf(part, sizeof(part),
-                                 mismatch ? "W%u: #ff3030 %c/%c# " : "W%u: %c/%c ",
-                                 (unsigned)i, istChar, sollChar);
-                    } else {
-                        snprintf(part, sizeof(part),
-                                 mismatch ? "W%u: #ff3030 %c/%c#" : "W%u: %c/%c",
-                                 (unsigned)i, istChar, sollChar);
-                    }
-
-                    if (col != 0u) strncat(rowBuf, "  ", sizeof(rowBuf) - strlen(rowBuf) - 1u);
-                    strncat(rowBuf, part, sizeof(rowBuf) - strlen(rowBuf) - 1u);
-                }
-                lv_label_set_text(g_ui.mega1WeicheSummaryLabel[row], rowBuf);
-                lv_obj_set_style_text_color(g_ui.mega1WeicheSummaryLabel[row],
-                    valid ? lv_color_white() : lv_palette_lighten(LV_PALETTE_GREY, 1), 0);
-            }
-        }
-    }
-
-
-    if (updateWeichenTab) for (uint8_t row = 0; row < 2u; ++row) {
-        if (!g_ui.sbhfSummaryLabel[row]) { continue; }
-        const uint8_t localA = (uint8_t)(row * 2u);
-        const uint8_t localB = (uint8_t)(localA + 1u);
-        const uint8_t idxA = localA;
-        const uint8_t idxB = localB;
-        const uint8_t turnoutA = (uint8_t)(12u + localA);
-        const uint8_t turnoutB = (uint8_t)(12u + localB);
-
-        const bool valid = g_dbg.mega2Online;
-        const bool istA = ((g_dbg.mega2TurnoutIstMask & (1u << idxA)) == 0u);
-        const bool sollA = ((g_dbg.mega2TurnoutSollMask & (1u << idxA)) != 0u);
-        const bool istB = ((g_dbg.mega2TurnoutIstMask & (1u << idxB)) == 0u);
-        const bool sollB = ((g_dbg.mega2TurnoutSollMask & (1u << idxB)) != 0u);
-        const bool mismatchA = valid && (istA != sollA);
-        const bool mismatchB = valid && (istB != sollB);
-
-        char partA[48];
-        char partB[48];
-        char rowBuf[128];
-
-        snprintf(
-            partA, sizeof(partA),
-            mismatchA ? "W%u: #ff3030 %c/%c#" : "W%u: %c/%c",
-            (unsigned)turnoutA,
-            !valid ? '-' : (istA ? 'G' : 'A'),
-            !valid ? '-' : (sollA ? 'G' : 'A')
-        );
-
-        snprintf(
-            partB, sizeof(partB),
-            mismatchB ? "W%u: #ff3030 %c/%c#" : "W%u: %c/%c",
-            (unsigned)turnoutB,
-            !valid ? '-' : (istB ? 'G' : 'A'),
-            !valid ? '-' : (sollB ? 'G' : 'A')
-        );
-
-        snprintf(
-            rowBuf, sizeof(rowBuf),
-            "%s   %s",
-            partA, partB
-        );
-        lv_label_set_text(g_ui.sbhfSummaryLabel[row], rowBuf);
-        lv_obj_set_style_text_color(
-            g_ui.sbhfSummaryLabel[row],
-            valid ? lv_color_white() : lv_palette_lighten(LV_PALETTE_GREY, 1),
-            0
-        );
-    }
-
-    if (updateBlocksTab && g_ui.blocksTabLabel) {
-        if (enteringBlocksTab && !g_blocksTabPrimed) {
-            // Ersten Live-Refresh beim allerersten Betreten des Blocks-Tabs
-            // bewusst um genau einen UI-Zyklus verschieben.
-            g_blocksTabPrimed = true;
-            g_stateUiPending = true;
-            g_stateUiPendingSinceMs = millis() - HMI_STATE_UI_COALESCE_MS;
-        } else {
-            char blocksBuf[1024];
-            hmiBuildBlocksTabText(blocksBuf, sizeof(blocksBuf));
-            lv_label_set_text(g_ui.blocksTabLabel, blocksBuf);
-        }
-    }
-
-    if (updateDebugTab && g_ui.debugTabLabel) {
-        char dbgBuf[768];
-        hmiBuildDebugTabText(dbgBuf, sizeof(dbgBuf));
-        lv_label_set_text(g_ui.debugTabLabel, dbgBuf);
-    }
-
-    if (g_ui.trafoLabelA && (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.trafoABuf, trafoABuf))) {
-        lv_label_set_text(g_ui.trafoLabelA, trafoABuf);
-        copyStr(g_rightPanelRenderCache.trafoABuf, sizeof(g_rightPanelRenderCache.trafoABuf), trafoABuf);
-    }
-    if (g_ui.trafoLabelB && (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.trafoBBuf, trafoBBuf))) {
-        lv_label_set_text(g_ui.trafoLabelB, trafoBBuf);
-        copyStr(g_rightPanelRenderCache.trafoBBuf, sizeof(g_rightPanelRenderCache.trafoBBuf), trafoBBuf);
-    }
-
-    g_rightPanelRenderCache.init = true;
-
-    const uint32_t nowMs = millis();
-
-    uint32_t startupOverlayHash = 0;
-    startupOverlayHash ^= g_dbg.startupChecklistActive ? (1u << 0) : 0u;
-    startupOverlayHash ^= g_dbg.startupM1Needs ? (1u << 1) : 0u;
-    startupOverlayHash ^= g_dbg.startupM2Needs ? (1u << 2) : 0u;
-    startupOverlayHash ^= g_dbg.startupM1SelftestDone ? (1u << 3) : 0u;
-    startupOverlayHash ^= g_dbg.startupM2SelftestDone ? (1u << 4) : 0u;
-    startupOverlayHash ^= g_dbg.startupM1SelftestRunning ? (1u << 5) : 0u;
-    startupOverlayHash ^= g_dbg.startupM2SelftestRunning ? (1u << 6) : 0u;
-    startupOverlayHash ^= g_dbg.safetyAckRequired ? (1u << 7) : 0u;
-    startupOverlayHash ^= g_dbg.safetyLock ? (1u << 8) : 0u;
-    startupOverlayHash ^= g_dbg.safetyNotausActive ? (1u << 9) : 0u;
-    startupOverlayHash ^= g_dbg.systemReady ? (1u << 10) : 0u;
-    startupOverlayHash ^= g_dbg.mega1Online ? (1u << 11) : 0u;
-    startupOverlayHash ^= g_dbg.mega2Online ? (1u << 12) : 0u;
-    startupOverlayHash ^= g_dbg.ethConnected ? (1u << 13) : 0u;
-    startupOverlayHash ^= g_dbg.actionCanWrite ? (1u << 14) : 0u;
-    startupOverlayHash ^= g_dbg.actionCanStartM1Selftest ? (1u << 15) : 0u;
-    startupOverlayHash ^= g_dbg.actionCanStartM2Selftest ? (1u << 16) : 0u;
-    startupOverlayHash ^= g_dbg.actionCanStartupConfirm ? (1u << 17) : 0u;
-    startupOverlayHash ^= g_pendingStartupM1 ? (1u << 18) : 0u;
-    startupOverlayHash ^= g_pendingStartupM2 ? (1u << 19) : 0u;
-    startupOverlayHash ^= g_pendingStartupAck ? (1u << 20) : 0u;
-
-    uint32_t retryOverlayHash = 0;
-    retryOverlayHash ^= g_dbg.uiStartupOverlayActive ? (1u << 0) : 0u;
-    retryOverlayHash ^= g_dbg.uiM1RetryOverlayActive ? (1u << 1) : 0u;
-    retryOverlayHash ^= g_dbg.uiM2RetryOverlayActive ? (1u << 2) : 0u;
-    retryOverlayHash ^= g_retrySessionM1Active ? (1u << 3) : 0u;
-    retryOverlayHash ^= g_retrySessionM2Active ? (1u << 4) : 0u;
-    retryOverlayHash ^= g_retryOverlayDismissed ? (1u << 5) : 0u;
-    retryOverlayHash ^= g_dbg.startupM1SelftestRunning ? (1u << 6) : 0u;
-    retryOverlayHash ^= g_dbg.startupM2SelftestRunning ? (1u << 7) : 0u;
-    retryOverlayHash ^= g_pendingM1Retry ? (1u << 8) : 0u;
-    retryOverlayHash ^= g_pendingM2Retry ? (1u << 9) : 0u;
-    retryOverlayHash ^= ((uint32_t)(uint8_t)g_dbg.uiOverlayMode[0] << 16);
-    retryOverlayHash ^= ((uint32_t)(uint8_t)g_dbg.uiRetryScope[0] << 24);
-
-    if (!g_overlayCacheInit ||
-        startupOverlayHash != g_lastStartupOverlayHash ||
-        (uint32_t)(nowMs - g_lastStartupOverlayUpdateMs) >= HMI_OVERLAY_REFRESH_MS) {
-        // --- NEU: Overlay hat Priorität, restlichen UI-Zyklus abbrechen ---
-        if (hmiStartupOverlayActive()) {
-            hmiStartupOverlayUpdate();
-
-            g_lastStartupOverlayHash = startupOverlayHash;
-            g_lastStartupOverlayUpdateMs = nowMs;
-
-            return; // <<< KRITISCH: keine weiteren UI-Updates in diesem Zyklus
-        }
-
-        hmiStartupOverlayUpdate();
-        g_lastStartupOverlayHash = startupOverlayHash;
-        g_lastStartupOverlayUpdateMs = nowMs;
-    }
-
-    if (!g_overlayCacheInit ||
-        retryOverlayHash != g_lastRetryOverlayHash ||
-        (uint32_t)(nowMs - g_lastRetryOverlayUpdateMs) >= HMI_OVERLAY_REFRESH_MS) {
-        hmiRetryOverlayUpdate();
-        g_lastRetryOverlayHash = retryOverlayHash;
-        g_lastRetryOverlayUpdateMs = nowMs;
-    }
-
-    g_overlayCacheInit = true;
-    g_lastActiveLeftTab = activeLeftTab;
-}
-
-static lv_obj_t* hmiUiCreateIndicatorLed(lv_obj_t* parent) {
-    lv_obj_t* led = lv_obj_create(parent);
-    lv_obj_set_size(led, 14, 14);
-    lv_obj_set_style_radius(led, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(led, 1, 0);
-    lv_obj_set_style_border_color(led, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
-    lv_obj_set_style_bg_color(led, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
-    lv_obj_set_style_bg_opa(led, LV_OPA_COVER, 0);
-    lv_obj_set_style_shadow_width(led, 6, 0);
-    lv_obj_set_style_shadow_color(led, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
-    lv_obj_set_style_shadow_opa(led, LV_OPA_40, 0);
-    lv_obj_clear_flag(led, LV_OBJ_FLAG_SCROLLABLE);
-    return led;
-}
-
-static lv_obj_t* hmiUiCreateActionButtonWithLeftLed(
-    lv_obj_t* parent,
-    lv_obj_t** outLed,
-    lv_obj_t** outLabel,
-    const char* text
-) {
-    lv_obj_t* row = lv_obj_create(parent);
-    lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(row, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_pad_column(row, 8, 0);
-    lv_obj_clear_flag(row, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* led = nullptr;
-    if (outLed) {
-        led = hmiUiCreateIndicatorLed(row);
-        *outLed = led;
-    }
-
-    lv_obj_t* btn = hmiUiCreateActionButton(row, outLabel, text);
-    lv_obj_set_flex_grow(btn, 1);
-    lv_obj_set_width(btn, lv_pct(100));
-
-    if (!outLed) {
-        lv_obj_set_style_pad_column(row, 0, 0);
-        lv_obj_set_style_pad_left(row, 22, 0);
-    }
-    return btn;
-}
-
-static lv_obj_t* hmiUiCreateActionButton(lv_obj_t* parent, lv_obj_t** outLabel, const char* text) {
-    lv_obj_t* btn = lv_btn_create(parent);
-    lv_obj_set_height(btn, 36);
-    lv_obj_set_style_radius(btn, 8, 0);
-    lv_obj_set_style_pad_top(btn, 0, 0);
-    lv_obj_set_style_pad_bottom(btn, 0, 0);
-    lv_obj_set_style_pad_left(btn, 10, 0);
-    lv_obj_set_style_pad_right(btn, 10, 0);
-    lv_obj_add_flag(btn, LV_OBJ_FLAG_CLICKABLE);
-
-    lv_obj_t* label = lv_label_create(btn);
-    lv_label_set_text(label, text);
-    lv_obj_center(label);
-
-    if (outLabel) {
-        *outLabel = label;
-    }
-    return btn;
-}
-
-static lv_obj_t* hmiUiCreateOverlayButton(lv_obj_t* parent, const char* text) {
-    lv_obj_t* btn = lv_btn_create(parent);
-    lv_obj_set_height(btn, 52);
-    lv_obj_set_style_radius(btn, 10, 0);
-    lv_obj_t* label = lv_label_create(btn);
-    lv_label_set_text(label, text);
-    lv_obj_center(label);
-    return btn;
-}
-
-static lv_obj_t* hmiUiCreateInfoPill(lv_obj_t* parent, lv_obj_t** outLabel, const char* text) {
-    lv_obj_t* pill = lv_btn_create(parent);
-    lv_obj_set_height(pill, 42);
-    lv_obj_set_style_radius(pill, 21, 0);
-    lv_obj_set_style_pad_left(pill, 14, 0);
-    lv_obj_set_style_pad_right(pill, 14, 0);
-    lv_obj_set_style_pad_top(pill, 6, 0);
-    lv_obj_set_style_pad_bottom(pill, 6, 0);
-    lv_obj_clear_flag(pill, LV_OBJ_FLAG_CLICKABLE);
-    lv_obj_clear_flag(pill, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* label = lv_label_create(pill);
-    lv_label_set_text(label, text ? text : "-");
-    lv_obj_center(label);
-
-    if (outLabel) {
-        *outLabel = label;
-    }
-    return pill;
-}
-
-static void hmiUiSetPill(lv_obj_t* pill, lv_obj_t* label, const char* text, lv_color_t bg) {
-    if (!pill) return;
-    if (label) {
-        lv_label_set_text(label, text ? text : "-");
-    }
-
-    lv_obj_set_style_bg_color(pill, bg, 0);
-    lv_obj_set_style_bg_opa(pill, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(pill, 0, 0);
-    lv_obj_set_style_text_color(pill, lv_color_white(), 0);
-}
-
-static lv_obj_t* hmiUiCreatePanel(lv_obj_t* parent, const char* title, lv_coord_t width) {
-    lv_obj_t* panel = lv_obj_create(parent);
-    lv_obj_set_width(panel, width);
-    lv_obj_set_height(panel, LV_SIZE_CONTENT);
-    lv_obj_set_style_radius(panel, 10, 0);
-    lv_obj_set_style_bg_color(panel, lv_palette_darken(LV_PALETTE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(panel, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(panel, 1, 0);
-    lv_obj_set_style_border_color(panel, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
-    lv_obj_set_style_pad_all(panel, 10, 0);
-    lv_obj_set_layout(panel, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(panel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(panel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(panel, 8, 0);
-
-    if (title && *title) {
-        lv_obj_t* label = lv_label_create(panel);
-        lv_label_set_text(label, title);
-        lv_obj_set_style_text_font(label, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(label, lv_color_white(), 0);
-    }
-    return panel;
-}
-
-static void hmiUiCreateBahnhofItem(
-    lv_obj_t* parent,
-    lv_obj_t** outItem,
-    const char* leftText,
-    lv_obj_t** outStateCell,
-    lv_obj_t** outLedGreen,
-    lv_obj_t** outLedRed,
-    lv_obj_t** outToggleBtn,
-    lv_obj_t** outToggleBtnLabel,
-    uint8_t bhfIndex
-) {
-    lv_obj_t* item = lv_obj_create(parent);
-    lv_obj_set_width(item, lv_pct(48));
-    lv_obj_set_height(item, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(item, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(item, 0, 0);
-    lv_obj_set_style_pad_all(item, 0, 0);
-    lv_obj_set_layout(item, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(item, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(item, 6, 0);
-    lv_obj_set_flex_align(item, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-
-    lv_obj_t* left = lv_obj_create(item);
-    lv_obj_set_size(left, 74, 34);
-    lv_obj_set_style_radius(left, 6, 0);
-    lv_obj_set_style_bg_color(left, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
-    lv_obj_set_style_bg_opa(left, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(left, 0, 0);
-
-    lv_obj_t* leftLabel = lv_label_create(left);
-    lv_label_set_text(leftLabel, leftText ? leftText : "-");
-    lv_obj_center(leftLabel);
-
-    // Container für beide LEDs
-    lv_obj_t* state = lv_obj_create(item);
-    lv_obj_set_size(state, 56, 22);
-    lv_obj_set_style_bg_opa(state, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(state, 0, 0);
-    lv_obj_set_style_pad_all(state, 0, 0);
-    lv_obj_set_style_pad_column(state, 6, 0);
-    lv_obj_set_style_pad_row(state, 0, 0);
-    lv_obj_set_layout(state, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(state, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(state, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER, LV_FLEX_ALIGN_CENTER);
-    lv_obj_clear_flag(state, LV_OBJ_FLAG_SCROLLABLE);
-
-    // LED GRÜN
-    lv_obj_t* ledGreen = lv_obj_create(state);
-    lv_obj_set_size(ledGreen, 18, 18);
-    lv_obj_set_style_radius(ledGreen, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(ledGreen, 2, 0);
-    lv_obj_set_style_border_color(ledGreen, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_bg_color(ledGreen, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_bg_opa(ledGreen, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(ledGreen, 0, 0);
-    lv_obj_set_style_shadow_width(ledGreen, 0, 0);
-    lv_obj_set_style_shadow_spread(ledGreen, 0, 0);
-    lv_obj_set_style_shadow_color(ledGreen, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_shadow_opa(ledGreen, LV_OPA_TRANSP, 0);
-    lv_obj_clear_flag(ledGreen, LV_OBJ_FLAG_SCROLLABLE);
-
-    // LED ROT
-    lv_obj_t* ledRed = lv_obj_create(state);
-    lv_obj_set_size(ledRed, 18, 18);
-    lv_obj_set_style_radius(ledRed, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(ledRed, 2, 0);
-    lv_obj_set_style_border_color(ledRed, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_bg_color(ledRed, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_bg_opa(ledRed, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(ledRed, 0, 0);
-    lv_obj_set_style_shadow_width(ledRed, 0, 0);
-    lv_obj_set_style_shadow_spread(ledRed, 0, 0);
-    lv_obj_set_style_shadow_color(ledRed, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_shadow_opa(ledRed, LV_OPA_TRANSP, 0);
-    lv_obj_clear_flag(ledRed, LV_OBJ_FLAG_SCROLLABLE);
-
-    lv_obj_t* btn = hmiUiCreateActionButton(item, outToggleBtnLabel, "EIN");
-    lv_obj_set_size(btn, 64, 34);
-    lv_obj_add_event_cb(btn, hmiUiOnBhfToggleClicked, LV_EVENT_CLICKED, (void*)(uintptr_t)bhfIndex);
-
-    if (outItem) *outItem = item;
-    if (outStateCell) *outStateCell = state; // bleibt für Container
-    if (outLedGreen) *outLedGreen = ledGreen;
-    if (outLedRed)   *outLedRed   = ledRed;
-    if (outToggleBtn) *outToggleBtn = btn;
-}
-
-static lv_obj_t* hmiUiCreateStatusLed(lv_obj_t* parent, lv_coord_t size) {
-    lv_obj_t* led = lv_obj_create(parent);
-    lv_obj_set_size(led, size, size);
-    lv_obj_set_style_radius(led, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_border_width(led, 2, 0);
-    lv_obj_set_style_border_color(led, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_bg_color(led, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_bg_opa(led, LV_OPA_COVER, 0);
-    lv_obj_set_style_pad_all(led, 0, 0);
-    lv_obj_set_style_shadow_width(led, 10, 0);
-    lv_obj_set_style_shadow_spread(led, 0, 0);
-    lv_obj_set_style_shadow_color(led, lv_palette_main(LV_PALETTE_GREY), 0);
-    lv_obj_set_style_shadow_opa(led, LV_OPA_30, 0);
-    lv_obj_clear_flag(led, LV_OBJ_FLAG_SCROLLABLE);
-    lv_obj_clear_flag(led, LV_OBJ_FLAG_CLICKABLE);
-    return led;
-}
-
-static void hmiUiCreateWeicheCompactCell(
-    lv_obj_t* parent,
-    uint8_t idx,
-    bool clickable,
-    lv_obj_t** outCell,
-    lv_obj_t** outNameLabel,
-    lv_obj_t** outStateLabel
-) {
-    lv_obj_t* cell = lv_obj_create(parent);
-    lv_obj_set_width(cell, lv_pct(48));
-    lv_obj_set_height(cell, 44);
-    lv_obj_set_style_radius(cell, 8, 0);
-    lv_obj_set_style_border_width(cell, 1, 0);
-    lv_obj_set_style_border_color(cell, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
-    lv_obj_set_style_bg_color(cell, lv_palette_lighten(LV_PALETTE_GREEN, 5), 0);
-    lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(cell, lv_palette_lighten(LV_PALETTE_BLUE, 3), LV_STATE_PRESSED);
-    lv_obj_set_style_border_color(cell, lv_palette_main(LV_PALETTE_BLUE), LV_STATE_PRESSED);
-    lv_obj_set_style_border_width(cell, 2, LV_STATE_PRESSED);
-    lv_obj_set_style_opa(cell, LV_OPA_80, LV_STATE_DISABLED);
-    lv_obj_set_style_border_color(cell, lv_palette_main(LV_PALETTE_GREY), LV_STATE_DISABLED);
-    lv_obj_set_style_pad_left(cell, 8, 0);
-    lv_obj_set_style_pad_right(cell, 8, 0);
-    lv_obj_set_style_pad_top(cell, 4, 0);
-    lv_obj_set_style_pad_bottom(cell, 4, 0);
-    lv_obj_clear_flag(cell, LV_OBJ_FLAG_SCROLLABLE);
-    if (clickable) {
-        lv_obj_add_flag(cell, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_add_event_cb(cell, hmiUiOnWeicheClicked, LV_EVENT_CLICKED, (void*)(uintptr_t)idx);
-    } else {
-        lv_obj_clear_flag(cell, LV_OBJ_FLAG_CLICKABLE);
-    }
-
-    char stateBuf[16];
-    snprintf(stateBuf, sizeof(stateBuf), "W%u -/-", (unsigned)idx);
-    lv_obj_t* state = lv_label_create(cell);
-    lv_label_set_text(state, stateBuf);
-    lv_obj_set_style_text_font(state, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(state, lv_color_black(), 0);
-    lv_obj_center(state);
-
-    if (outCell) *outCell = cell;
-    if (outNameLabel) *outNameLabel = nullptr;
-    if (outStateLabel) *outStateLabel = state;
-}
-
-static void hmiUiCreateStatusRow(
-    lv_obj_t* parent,
-    const char* leftText,
-    lv_obj_t** outValueCell,
-    lv_obj_t** outValueLabel
-) {
-    lv_obj_t* row = lv_obj_create(parent);
-    lv_obj_set_width(row, lv_pct(100));
-    lv_obj_set_height(row, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(row, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(row, 0, 0);
-    lv_obj_set_style_pad_all(row, 0, 0);
-    lv_obj_set_layout(row, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(row, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(row, 8, 0);
-
-    lv_obj_t* left = lv_obj_create(row);
-    lv_obj_set_size(left, 120, 38);
-    lv_obj_set_style_radius(left, 6, 0);
-    lv_obj_set_style_bg_color(left, lv_palette_darken(LV_PALETTE_GREY, 2), 0);
-    lv_obj_set_style_bg_opa(left, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(left, 0, 0);
-    lv_obj_t* leftLabel = lv_label_create(left);
-    lv_label_set_text(leftLabel, leftText ? leftText : "-");
-    lv_obj_center(leftLabel);
-
-    lv_obj_t* right = lv_obj_create(row);
-    lv_obj_set_flex_grow(right, 1);
-    lv_obj_set_height(right, 38);
-    lv_obj_set_style_radius(right, 6, 0);
-    lv_obj_set_style_border_width(right, 0, 0);
-    lv_obj_t* rightLabel = lv_label_create(right);
-    lv_label_set_text(rightLabel, "-");
-    lv_obj_center(rightLabel);
-
-    if (outValueCell) *outValueCell = right;
-    if (outValueLabel) *outValueLabel = rightLabel;
-}
-
-static void hmiUiSetStatusCell(lv_obj_t* cell, lv_obj_t* label, const char* text, lv_color_t bg) {
-    if (!cell) return;
-    if (label) {
-        lv_label_set_text(label, text ? text : "-");
-    }
-    lv_obj_set_style_bg_color(cell, bg, 0);
-    lv_obj_set_style_bg_opa(cell, LV_OPA_COVER, 0);
-    lv_obj_set_style_text_color(cell, lv_color_white(), 0);
-}
-
 static bool strChanged(const char* a, const char* b) {
     if (!a && !b) return false;
     if (!a || !b) return true;
@@ -2339,50 +2274,61 @@ static void copyStr(char* dst, size_t dstSize, const char* src) {
     dst[dstSize - 1] = '\0';
 }
 
-static void hmiUiSetActionButtonColor(lv_obj_t* btn, lv_color_t bg) {
-    if (!btn) return;
-    lv_obj_set_style_bg_color(btn, bg, 0);
-    lv_obj_set_style_bg_opa(btn, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(btn, 0, 0);
-    lv_obj_set_style_text_color(btn, lv_color_white(), 0);
+static void hmiBuildWeicheSummaryPart(
+    char* out,
+    size_t outSize,
+    uint8_t turnoutNumber,
+    bool valid,
+    bool istGerade,
+    bool sollGerade
+) {
+    if (!out || outSize == 0) {
+        return;
+    }
+
+    const char istChar = !valid ? '-' : (istGerade ? 'G' : 'A');
+    const char sollChar = !valid ? '-' : (sollGerade ? 'G' : 'A');
+    const bool mismatch = valid && (istGerade != sollGerade);
+
+    snprintf(
+        out, outSize,
+        mismatch ? "W%u: #ff3030 %c/%c#" : "W%u: %c/%c",
+        (unsigned)turnoutNumber, istChar, sollChar
+    );
 }
 
-static void hmiUiBuildStatusTexts(
-    char* systemBuf, size_t systemBufSize,
-    char* ethBuf, size_t ethBufSize,
-    char* wsBuf, size_t wsBufSize,
-    char* m1Buf, size_t m1BufSize,
-    char* m2Buf, size_t m2BufSize,
-    char* modeBuf, size_t modeBufSize,
-    char* powerBuf, size_t powerBufSize,
-    bool* outSystemWarn,
-    bool* outM1Warn,
-    bool* outM2Warn
+static void hmiSetCachedStatusCell(
+    lv_obj_t* cell,
+    lv_obj_t* label,
+    char* cacheBuf,
+    size_t cacheBufSize,
+    bool cacheInit,
+    const char* value,
+    lv_color_t color
 ) {
-    const bool m1Warn = g_dbg.mega1Online && g_dbg.startupM1Needs && (!g_dbg.startupM1SelftestDone);
-    const bool m2Warn = g_dbg.mega2Online && g_dbg.startupM2Needs && (!g_dbg.startupM2SelftestDone);
-    const bool systemWarn =
-        g_dbg.summaryWarningPresent ||
-        g_dbg.safetyLock ||
-        g_dbg.safetyAckRequired ||
-        g_dbg.safetyNotausActive ||
-        (!g_dbg.ethConnected) ||
-        (!g_dbg.mega1Online) ||
-        (!g_dbg.mega2Online) ||
-        m1Warn ||
-        m2Warn;
+    if (!cell || !cacheBuf || cacheBufSize == 0 || !value) {
+        return;
+    }
+    if (!cacheInit || strChanged(cacheBuf, value)) {
+        hmiUiSetStatusCell(cell, label, value, color);
+        copyStr(cacheBuf, cacheBufSize, value);
+    }
+}
 
-    snprintf(systemBuf, systemBufSize, "System: %s", systemWarn ? "Warning" : "OK");
-    snprintf(ethBuf, ethBufSize, "ETH: %s  IP: %s", g_dbg.ethConnected ? "OK" : "Getrennt", g_dbg.ethIp);
-    snprintf(wsBuf, wsBufSize, "WS: %s", (g_dbg.wsClients > 0) ? "Verbunden" : "Getrennt");
-    snprintf(m1Buf, m1BufSize, "Mega1: %s", !g_dbg.mega1Online ? "Offline" : (m1Warn ? "Online, Warn" : "Online"));
-    snprintf(m2Buf, m2BufSize, "Mega2: %s", !g_dbg.mega2Online ? "Offline" : (m2Warn ? "Online, Warn" : "Online"));
-    snprintf(modeBuf, modeBufSize, "Modus: %s", g_dbg.mega1ModeAuto ? "Auto" : "Manuell");
-    snprintf(powerBuf, powerBufSize, "Power: %s", g_dbg.safetyPowerOn ? "AN" : "AUS");
-
-    if (outSystemWarn) *outSystemWarn = systemWarn;
-    if (outM1Warn) *outM1Warn = m1Warn;
-    if (outM2Warn) *outM2Warn = m2Warn;
+static void hmiSetCachedLabelText(
+    lv_obj_t* label,
+    char* cacheBuf,
+    size_t cacheBufSize,
+    bool cacheInit,
+    const char* value
+) {
+    if (!label || !cacheBuf || cacheBufSize == 0 || !value) {
+        return;
+    }
+    if (!cacheInit || strChanged(cacheBuf, value)) {
+        lv_label_set_text(label, value);
+        copyStr(cacheBuf, cacheBufSize, value);
+    }
 }
 
 static uint8_t hmiBlockOccDisplayBitToMaskBit(uint8_t displayBit) {
@@ -2393,7 +2339,15 @@ static uint8_t hmiBlockOccDisplayBitToMaskBit(uint8_t displayBit) {
 }
 
 static uint8_t hmiGrantDisplayBitToMaskBit(uint8_t displayBit) {
-    // KORREKTE Masken-Zuordnung (fix für dein aktuelles Problem):
+    // WICHTIG:
+    // Die Reihenfolge der im UI angezeigten Freigaben entspricht nicht 1:1
+    // der Bitreihenfolge im von Mega2 gelieferten Maskenwert.
+    //
+    // Deshalb existiert hier eine explizite Zuordnungstabelle.
+    // Sonderfaelle wie SBHF3->6 und 6->4 sind hier bewusst zentralisiert,
+    // damit das Mapping nicht verteilt und spaeter inkonsistent gepflegt wird.
+    // UI-Display-Reihenfolge ist bewusst von der Bit-Reihenfolge im Payload entkoppelt.
+    // Sonderfälle wie SBHF3->6 und 6->4 bleiben damit zentral dokumentiert.
     static const uint8_t kMap[12] = {
         0,  // 1->2
         1,  // 2->3
@@ -2528,433 +2482,560 @@ static void hmiBuildDebugTabText(char* out, size_t outSize) {
    );
 }
 
-static void createMainUi() {
-    lv_obj_t* screen = lv_scr_act();
-
-    g_ui.root = lv_obj_create(screen);
-    lv_obj_set_size(g_ui.root, lv_pct(100), lv_pct(100));
-    lv_obj_align(g_ui.root, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_opa(g_ui.root, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.root, 0, 0);
-    lv_obj_set_style_pad_all(g_ui.root, 12, 0);
-    lv_obj_set_layout(g_ui.root, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.root, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(g_ui.root, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(g_ui.root, 10, 0);
-
-    g_ui.title = lv_label_create(g_ui.root);
-    lv_label_set_text(g_ui.title, "Elektrische Eisenbahn HMI");
-    lv_obj_set_style_text_font(g_ui.title, &lv_font_montserrat_26, 0);
-    lv_obj_set_style_text_color(g_ui.title, lv_color_white(), 0);
-
-    lv_obj_t* split = lv_obj_create(g_ui.root);
-    lv_obj_set_width(split, lv_pct(100));
-    lv_obj_set_flex_grow(split, 1);
-    lv_obj_set_style_bg_opa(split, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(split, 0, 0);
-    lv_obj_set_style_pad_all(split, 0, 0);
-    lv_obj_set_layout(split, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(split, LV_FLEX_FLOW_ROW);
-    lv_obj_set_style_pad_column(split, 8, 0);
-
-    g_ui.leftPane = lv_obj_create(split);
-    lv_obj_set_width(g_ui.leftPane, lv_pct(68));
-    lv_obj_set_flex_grow(g_ui.leftPane, 1);
-    lv_obj_set_height(g_ui.leftPane, lv_pct(100));
-    lv_obj_set_style_bg_opa(g_ui.leftPane, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.leftPane, 0, 0);
-    lv_obj_set_style_pad_all(g_ui.leftPane, 0, 0);
-    lv_obj_set_layout(g_ui.leftPane, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.leftPane, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(g_ui.leftPane, 6, 0);
-
-    g_ui.mainContent = lv_obj_create(g_ui.leftPane);
-    lv_obj_set_width(g_ui.mainContent, lv_pct(100));
-    lv_obj_set_flex_grow(g_ui.mainContent, 1);
-    lv_obj_set_style_bg_color(g_ui.mainContent, lv_palette_darken(LV_PALETTE_GREY, 4), 0);
-    lv_obj_set_style_bg_opa(g_ui.mainContent, LV_OPA_COVER, 0);
-    lv_obj_set_style_border_width(g_ui.mainContent, 1, 0);
-    lv_obj_set_style_border_color(g_ui.mainContent, lv_palette_darken(LV_PALETTE_GREY, 1), 0);
-    lv_obj_set_style_radius(g_ui.mainContent, 8, 0);
-    lv_obj_set_style_pad_all(g_ui.mainContent, 10, 0);
-    lv_obj_set_layout(g_ui.mainContent, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.mainContent, LV_FLEX_FLOW_COLUMN);
-    
-    g_ui.leftTabview = lv_tabview_create(g_ui.mainContent, LV_DIR_TOP, 40);
-    lv_obj_set_width(g_ui.leftTabview, lv_pct(100));
-    lv_obj_set_flex_grow(g_ui.leftTabview, 1);
-    lv_obj_set_style_bg_opa(g_ui.leftTabview, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.leftTabview, 0, 0);
-    lv_obj_set_style_pad_all(g_ui.leftTabview, 0, 0);
-
-    g_ui.tabMega1 = lv_tabview_add_tab(g_ui.leftTabview, "Weichen");
-    g_ui.tabSbhf  = lv_tabview_add_tab(g_ui.leftTabview, "Bahnhoefe");
-    g_ui.tabBlocks = lv_tabview_add_tab(g_ui.leftTabview, "Bloecke");
-    g_ui.tabDebug  = lv_tabview_add_tab(g_ui.leftTabview, "Debug");
-
-    // Start auf Weichen.
-    lv_tabview_set_act(g_ui.leftTabview, 0, LV_ANIM_OFF);
-
-    lv_obj_t* tabBtns = lv_tabview_get_tab_btns(g_ui.leftTabview);
-    if (tabBtns) {
-        lv_obj_set_style_bg_color(tabBtns, lv_palette_darken(LV_PALETTE_GREY, 4), 0);
-        lv_obj_set_style_bg_opa(tabBtns, LV_OPA_COVER, 0);
-        lv_obj_set_style_border_width(tabBtns, 0, 0);
-        lv_obj_set_style_pad_all(tabBtns, 2, 0);
-        lv_obj_set_style_outline_width(tabBtns, 0, 0);
-
-        lv_obj_set_style_bg_color(tabBtns, lv_palette_darken(LV_PALETTE_GREY, 3), LV_PART_ITEMS);
-        lv_obj_set_style_bg_opa(tabBtns, LV_OPA_COVER, LV_PART_ITEMS);
-        lv_obj_set_style_text_color(tabBtns, lv_color_white(), LV_PART_ITEMS);
-        lv_obj_set_style_border_width(tabBtns, 0, LV_PART_ITEMS);
-
-        lv_obj_set_style_bg_color(tabBtns, lv_palette_main(LV_PALETTE_BLUE), LV_PART_ITEMS | LV_STATE_CHECKED);
-        lv_obj_set_style_bg_opa(tabBtns, LV_OPA_COVER, LV_PART_ITEMS | LV_STATE_CHECKED);
-        lv_obj_set_style_text_color(tabBtns, lv_color_white(), LV_PART_ITEMS | LV_STATE_CHECKED);
-    }
-
-    lv_obj_t* tabContent = lv_tabview_get_content(g_ui.leftTabview);
-    if (tabContent) {
-        lv_obj_set_style_bg_opa(tabContent, LV_OPA_TRANSP, 0);
-        lv_obj_set_style_border_width(tabContent, 0, 0);
-        lv_obj_set_style_pad_all(tabContent, 0, 0);
-    }
-
-    lv_obj_set_style_pad_all(g_ui.tabMega1, 0, 0);
-    lv_obj_set_style_bg_opa(g_ui.tabMega1, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.tabMega1, 0, 0);
-    lv_obj_set_style_outline_width(g_ui.tabMega1, 0, 0);
-    lv_obj_set_layout(g_ui.tabMega1, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.tabMega1, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(g_ui.tabMega1, 6, 0);
-    
-    lv_obj_set_style_pad_all(g_ui.tabBlocks, 0, 0);
-    lv_obj_set_style_bg_opa(g_ui.tabBlocks, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.tabBlocks, 0, 0);
-    lv_obj_set_style_outline_width(g_ui.tabBlocks, 0, 0);
-    lv_obj_set_layout(g_ui.tabBlocks, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.tabBlocks, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(g_ui.tabBlocks, 6, 0);
-
-    g_ui.blocksTabTitle = lv_label_create(g_ui.tabBlocks);
-    lv_label_set_text(g_ui.blocksTabTitle, "Blockbelegung");
-    lv_obj_set_style_text_font(g_ui.blocksTabTitle, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.blocksTabTitle, lv_color_white(), 0);
-
-    g_ui.blocksTabLabel = lv_label_create(g_ui.tabBlocks);
-    lv_obj_set_width(g_ui.blocksTabLabel, lv_pct(100));
-    lv_label_set_long_mode(g_ui.blocksTabLabel, LV_LABEL_LONG_WRAP);
-    lv_label_set_recolor(g_ui.blocksTabLabel, true);
-    lv_obj_set_style_text_font(g_ui.blocksTabLabel, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.blocksTabLabel, lv_color_white(), 0);
-    char initBlocksBuf[1024];
-    hmiBuildBlocksTabText(initBlocksBuf, sizeof(initBlocksBuf));
-    lv_label_set_text(g_ui.blocksTabLabel, initBlocksBuf);
-    
-    lv_obj_set_style_pad_all(g_ui.tabDebug, 0, 0);
-    lv_obj_set_style_bg_opa(g_ui.tabDebug, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.tabDebug, 0, 0);
-    lv_obj_set_style_outline_width(g_ui.tabDebug, 0, 0);
-    lv_obj_set_layout(g_ui.tabDebug, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.tabDebug, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(g_ui.tabDebug, 6, 0);
-
-    g_ui.debugTabTitle = lv_label_create(g_ui.tabDebug);
-    lv_label_set_text(g_ui.debugTabTitle, "Debug");
-    lv_obj_set_style_text_font(g_ui.debugTabTitle, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.debugTabTitle, lv_color_white(), 0);
-
-    g_ui.debugTabLabel = lv_label_create(g_ui.tabDebug);
-    lv_obj_set_width(g_ui.debugTabLabel, lv_pct(100));
-    lv_label_set_long_mode(g_ui.debugTabLabel, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(g_ui.debugTabLabel, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.debugTabLabel, lv_color_white(), 0);
-    lv_label_set_text(g_ui.debugTabLabel, "Debug-Tab bereit.");
-
-    lv_obj_set_style_pad_all(g_ui.tabSbhf, 0, 0);
-    lv_obj_set_style_bg_opa(g_ui.tabSbhf, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.tabSbhf, 0, 0);
-    lv_obj_set_style_outline_width(g_ui.tabSbhf, 0, 0);
-    lv_obj_set_layout(g_ui.tabSbhf, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.tabSbhf, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(g_ui.tabSbhf, 6, 0);
-    lv_obj_set_style_bg_opa(g_ui.tabSbhf, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.tabSbhf, 0, 0);
-
-    g_ui.bahnhofPanel = hmiUiCreatePanel(g_ui.tabSbhf, "Bahnhoefe", lv_pct(100));
-    lv_obj_set_style_pad_all(g_ui.bahnhofPanel, 8, 0);
-    lv_obj_set_style_pad_row(g_ui.bahnhofPanel, 6, 0);
-    // >>> FEHLTE KOMPLETT
-    g_ui.bahnhofGrid = lv_obj_create(g_ui.bahnhofPanel);
-    lv_obj_set_width(g_ui.bahnhofGrid, lv_pct(100));
-    lv_obj_set_height(g_ui.bahnhofGrid, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(g_ui.bahnhofGrid, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.bahnhofGrid, 0, 0);
-    lv_obj_set_layout(g_ui.bahnhofGrid, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.bahnhofGrid, LV_FLEX_FLOW_ROW_WRAP);
-    lv_obj_set_flex_align(g_ui.bahnhofGrid,
-        LV_FLEX_ALIGN_START,
-        LV_FLEX_ALIGN_START,
-        LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_column(g_ui.bahnhofGrid, 8, 0);
-    lv_obj_set_style_pad_row(g_ui.bahnhofGrid, 6, 0);
-    for (uint8_t i = 0; i < 4u; ++i) {
-        char leftText[16];
-        snprintf(leftText, sizeof(leftText), "BHF%u", (unsigned)i);
-        hmiUiCreateBahnhofItem(
-            g_ui.bahnhofGrid,
-            &g_ui.bahnhofItem[i],
-            leftText,
-            &g_ui.bahnhofStateCell[i],
-            &g_ui.bahnhofLedGreen[i],
-            &g_ui.bahnhofLedRed[i],
-            &g_ui.bahnhofToggleBtn[i],
-            &g_ui.bahnhofToggleBtnLabel[i],
-            i
-        );
-    }
-
-    g_ui.weichePanel = hmiUiCreatePanel(g_ui.tabMega1, "Weichen Mega1 (read-only)", lv_pct(100));
-    lv_obj_set_style_pad_all(g_ui.weichePanel, 8, 0);
-    lv_obj_set_style_pad_row(g_ui.weichePanel, 6, 0);
-    lv_obj_set_height(g_ui.weichePanel, LV_SIZE_CONTENT);
-
-    g_ui.weicheGrid = lv_obj_create(g_ui.weichePanel);
-    lv_obj_set_width(g_ui.weicheGrid, lv_pct(100));
-    lv_obj_set_height(g_ui.weicheGrid, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(g_ui.weicheGrid, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.weicheGrid, 0, 0);
-    lv_obj_set_style_pad_all(g_ui.weicheGrid, 0, 0);
-    lv_obj_set_layout(g_ui.weicheGrid, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.weicheGrid, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(g_ui.weicheGrid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(g_ui.weicheGrid, 6, 0);
-    lv_obj_clear_flag(g_ui.weicheGrid, LV_OBJ_FLAG_SCROLLABLE);
-
-    for (uint8_t row = 0; row < 3u; ++row) {
-        g_ui.mega1WeicheSummaryLabel[row] = lv_label_create(g_ui.weicheGrid);
-        lv_obj_set_width(g_ui.mega1WeicheSummaryLabel[row], lv_pct(100));
-        lv_label_set_recolor(g_ui.mega1WeicheSummaryLabel[row], true);
-        lv_label_set_long_mode(g_ui.mega1WeicheSummaryLabel[row], LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_text_font(g_ui.mega1WeicheSummaryLabel[row], &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(g_ui.mega1WeicheSummaryLabel[row], lv_color_white(), 0);
-    }
-    lv_label_set_text(g_ui.mega1WeicheSummaryLabel[0], "W0 -/-   W1 -/-   W2 -/-   W3 -/-");
-    lv_label_set_text(g_ui.mega1WeicheSummaryLabel[1], "W4 -/-   W5 -/-   W6 -/-   W7 -/-");
-    lv_label_set_text(g_ui.mega1WeicheSummaryLabel[2], "W8 -/-   W9 -/-   W10 -/-   W11 -/-");
-
-    lv_obj_t* sbhfPanel = hmiUiCreatePanel(g_ui.tabMega1, "SBHF-Weichen (read-only)", lv_pct(100));
-    lv_obj_set_style_pad_all(sbhfPanel, 8, 0);
-    lv_obj_set_style_pad_row(sbhfPanel, 6, 0);
-
-    for (uint8_t row = 0; row < 2u; ++row) {
-        g_ui.sbhfSummaryLabel[row] = lv_label_create(sbhfPanel);
-        lv_obj_set_width(g_ui.sbhfSummaryLabel[row], lv_pct(100));
-        lv_label_set_recolor(g_ui.sbhfSummaryLabel[row], true);
-        lv_label_set_long_mode(g_ui.sbhfSummaryLabel[row], LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_text_font(g_ui.sbhfSummaryLabel[row], &lv_font_montserrat_16, 0);
-        lv_obj_set_style_text_color(g_ui.sbhfSummaryLabel[row], lv_color_white(), 0);
-        lv_label_set_text(g_ui.sbhfSummaryLabel[row], row == 0 ? "W12 I:- S:-   |   W13 I:- S:-" : "W14 I:- S:-   |   W15 I:- S:-");
-    }
-
-    g_ui.rightPane = lv_obj_create(split);
-    lv_obj_set_width(g_ui.rightPane, lv_pct(32));
-    lv_obj_set_height(g_ui.rightPane, lv_pct(100));
-    lv_obj_set_style_bg_opa(g_ui.rightPane, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.rightPane, 0, 0);
-    lv_obj_set_style_pad_all(g_ui.rightPane, 0, 0);
-    lv_obj_set_layout(g_ui.rightPane, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.rightPane, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(g_ui.rightPane, 8, 0);
-
-    g_ui.actionPanel = hmiUiCreatePanel(g_ui.rightPane, "Aktionen", lv_pct(100));
-    
-    g_ui.powerBtn = hmiUiCreateActionButtonWithLeftLed(
-        g_ui.actionPanel, &g_ui.powerLed, &g_ui.powerBtnLabel, "POWER ON"
-    );
-    lv_obj_add_event_cb(g_ui.powerBtn, hmiUiOnPowerClicked, LV_EVENT_CLICKED, nullptr);
-
-    g_ui.powerOffBtn = hmiUiCreateActionButtonWithLeftLed(
-        g_ui.actionPanel, nullptr, &g_ui.powerOffBtnLabel, "STOP / POWER OFF"
-    );
-    lv_obj_add_event_cb(g_ui.powerOffBtn, hmiUiOnPowerOffClicked, LV_EVENT_CLICKED, nullptr);
-
-    g_ui.autoBtn = hmiUiCreateActionButtonWithLeftLed(
-        g_ui.actionPanel, &g_ui.autoLed, &g_ui.autoBtnLabel, "AUTO"
-    );
-    lv_obj_add_event_cb(g_ui.autoBtn, hmiUiOnAutoClicked, LV_EVENT_CLICKED, nullptr);
-
-    g_ui.trafoPanel = hmiUiCreatePanel(g_ui.rightPane, nullptr, lv_pct(100));
-    lv_obj_set_style_pad_top(g_ui.trafoPanel, 8, 0);
-    lv_obj_set_style_pad_bottom(g_ui.trafoPanel, 8, 0);
-    g_ui.trafoLabelA = lv_label_create(g_ui.trafoPanel);
-    lv_obj_set_style_text_font(g_ui.trafoLabelA, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.trafoLabelA, lv_color_white(), 0);
-    lv_obj_set_style_text_opa(g_ui.trafoLabelA, LV_OPA_COVER, 0);
-    lv_obj_set_width(g_ui.trafoLabelA, lv_pct(100));
-    lv_label_set_long_mode(g_ui.trafoLabelA, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(g_ui.trafoLabelA, "Trafo A10: -");
-
-    g_ui.trafoLabelB = lv_label_create(g_ui.trafoPanel);
-    lv_obj_set_style_text_font(g_ui.trafoLabelB, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.trafoLabelB, lv_color_white(), 0);
-    lv_obj_set_style_text_opa(g_ui.trafoLabelB, LV_OPA_COVER, 0);
-    lv_obj_set_width(g_ui.trafoLabelB, lv_pct(100));
-    lv_label_set_long_mode(g_ui.trafoLabelB, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(g_ui.trafoLabelB, "Trafo B10: -");
-
-    g_ui.lockPanel = hmiUiCreatePanel(g_ui.rightPane, "Schreibrechte", lv_pct(100));
-    g_ui.lockLabel = lv_label_create(g_ui.lockPanel);
-    lv_label_set_text(g_ui.lockLabel, "Bedienung: -");
-    lv_obj_set_width(g_ui.lockLabel, lv_pct(100));
-    lv_label_set_long_mode(g_ui.lockLabel, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(g_ui.lockLabel, &lv_font_montserrat_16, 0);
-
-    g_ui.systemPanel = hmiUiCreatePanel(g_ui.rightPane, "Systemstatus", lv_pct(100));
-    hmiUiCreateStatusRow(g_ui.systemPanel, "ETH",     &g_ui.rowEthValue,    &g_ui.rowEthValueLabel);
-    hmiUiCreateStatusRow(g_ui.systemPanel, "Mega1",   &g_ui.rowMega1Value,  &g_ui.rowMega1ValueLabel);
-    hmiUiCreateStatusRow(g_ui.systemPanel, "Mega2",   &g_ui.rowMega2Value,  &g_ui.rowMega2ValueLabel);
-    hmiUiCreateStatusRow(g_ui.systemPanel, "Safety",  &g_ui.rowSafetyValue, &g_ui.rowSafetyValueLabel);
-    hmiUiCreateStatusRow(g_ui.systemPanel, "Warning", &g_ui.rowWarningValue,&g_ui.rowWarningValueLabel);
-    hmiUiCreateStatusRow(g_ui.systemPanel, "Power",   &g_ui.rowPowerValue,  &g_ui.rowPowerValueLabel);
-    hmiUiCreateStatusRow(g_ui.systemPanel, "Modus",   &g_ui.rowModeValue,   &g_ui.rowModeValueLabel);
-    hmiUiCreateStatusRow(g_ui.systemPanel, "WS/Diag", &g_ui.rowWsDiagValue, &g_ui.rowWsDiagValueLabel);
-
-    g_ui.defectPanel = hmiUiCreatePanel(g_ui.rightPane, "Defekte", lv_pct(100));
-    g_ui.m1DefectLabel = lv_label_create(g_ui.defectPanel);
-    lv_obj_set_width(g_ui.m1DefectLabel, lv_pct(100));
-    lv_label_set_long_mode(g_ui.m1DefectLabel, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(g_ui.m1DefectLabel, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.m1DefectLabel, lv_color_white(), 0);
-    lv_obj_set_style_text_opa(g_ui.m1DefectLabel, LV_OPA_COVER, 0);
-    lv_label_set_text(g_ui.m1DefectLabel, "Mega1: Keine Defekte");
-
-    g_ui.m2DefectLabel = lv_label_create(g_ui.defectPanel);
-    lv_obj_set_width(g_ui.m2DefectLabel, lv_pct(100));
-    lv_label_set_long_mode(g_ui.m2DefectLabel, LV_LABEL_LONG_WRAP);
-    lv_obj_set_style_text_font(g_ui.m2DefectLabel, &lv_font_montserrat_16, 0);
-    lv_obj_set_style_text_color(g_ui.m2DefectLabel, lv_color_white(), 0);
-    lv_obj_set_style_text_opa(g_ui.m2DefectLabel, LV_OPA_COVER, 0);
-    lv_label_set_text(g_ui.m2DefectLabel, "SBHF: Keine Defekte");
-
-    g_ui.defectRow = lv_obj_create(g_ui.defectPanel);
-    lv_obj_set_width(g_ui.defectRow, lv_pct(100));
-    lv_obj_set_height(g_ui.defectRow, LV_SIZE_CONTENT);
-    lv_obj_set_style_bg_opa(g_ui.defectRow, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(g_ui.defectRow, 0, 0);
-    lv_obj_set_style_pad_all(g_ui.defectRow, 0, 0);
-    lv_obj_set_layout(g_ui.defectRow, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.defectRow, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(g_ui.defectRow, 8, 0);
-    lv_obj_set_style_pad_column(g_ui.defectRow, 12, 0);
-
-    g_ui.m1RetryBtn = hmiUiCreateActionButton(g_ui.defectRow, &g_ui.m1RetryBtnLabel, "MEGA1 RETRY");
-    lv_obj_set_width(g_ui.m1RetryBtn, lv_pct(100));
-    lv_obj_add_event_cb(g_ui.m1RetryBtn, hmiUiOnM1RetryClicked, LV_EVENT_CLICKED, nullptr);
-
-    g_ui.m2RetryBtn = hmiUiCreateActionButton(g_ui.defectRow, &g_ui.m2RetryBtnLabel, "SBHF RETRY");
-    lv_obj_set_width(g_ui.m2RetryBtn, lv_pct(100));
-    lv_obj_add_event_cb(g_ui.m2RetryBtn, hmiUiOnM2RetryClicked, LV_EVENT_CLICKED, nullptr);
-
-    // alte Widgets bewusst versteckt / ungenutzt lassen
-    g_ui.statusLabel = lv_label_create(g_ui.leftPane);
-    lv_obj_add_flag(g_ui.statusLabel, LV_OBJ_FLAG_HIDDEN);
-    g_ui.detailLabel = lv_label_create(g_ui.leftPane);
-    lv_obj_add_flag(g_ui.detailLabel, LV_OBJ_FLAG_HIDDEN);
-
-    g_ui.startupOverlay = lv_obj_create(screen);
-    lv_obj_set_size(g_ui.startupOverlay, lv_pct(100), lv_pct(100));
-    lv_obj_align(g_ui.startupOverlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_opa(g_ui.startupOverlay, LV_OPA_70, 0);
-    lv_obj_set_style_bg_color(g_ui.startupOverlay, lv_color_black(), 0);
-    lv_obj_set_style_border_width(g_ui.startupOverlay, 0, 0);
-    lv_obj_set_style_pad_all(g_ui.startupOverlay, 0, 0);
-
-    g_ui.startupPanel = lv_obj_create(g_ui.startupOverlay);
-    lv_obj_set_width(g_ui.startupPanel, lv_pct(82));
-    lv_obj_set_height(g_ui.startupPanel, LV_SIZE_CONTENT);
-    lv_obj_center(g_ui.startupPanel);
-    lv_obj_set_style_radius(g_ui.startupPanel, 14, 0);
-    lv_obj_set_style_pad_all(g_ui.startupPanel, 16, 0);
-    lv_obj_set_layout(g_ui.startupPanel, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.startupPanel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(g_ui.startupPanel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(g_ui.startupPanel, 10, 0);
-
-    g_ui.startupTitle = lv_label_create(g_ui.startupPanel);
-    lv_label_set_text(g_ui.startupTitle, "Systemstart - Checkliste");
-    lv_obj_set_style_text_font(g_ui.startupTitle, &lv_font_montserrat_26, 0);
-
-    g_ui.startupText = lv_label_create(g_ui.startupPanel);
-    lv_label_set_text(g_ui.startupText, "Bitte die folgenden Punkte abarbeiten, bevor Power eingeschaltet werden kann.");
-    lv_obj_set_width(g_ui.startupText, lv_pct(100));
-    lv_label_set_long_mode(g_ui.startupText, LV_LABEL_LONG_WRAP);
-
-    g_ui.startupStatus = lv_label_create(g_ui.startupPanel);
-    lv_obj_set_width(g_ui.startupStatus, lv_pct(100));
-    lv_label_set_long_mode(g_ui.startupStatus, LV_LABEL_LONG_WRAP);
-
-    g_ui.startupM2Btn = hmiUiCreateOverlayButton(g_ui.startupPanel, "SBHF TEST");
-    lv_obj_set_width(g_ui.startupM2Btn, lv_pct(100));
-    lv_obj_add_event_cb(g_ui.startupM2Btn, hmiUiOnM2TestClicked, LV_EVENT_CLICKED, nullptr);
-
-    g_ui.startupM1Btn = hmiUiCreateOverlayButton(g_ui.startupPanel, "MEGA1 TEST");
-    lv_obj_set_width(g_ui.startupM1Btn, lv_pct(100));
-    lv_obj_add_event_cb(g_ui.startupM1Btn, hmiUiOnM1TestClicked, LV_EVENT_CLICKED, nullptr);
-
-    g_ui.startupAckBtn = hmiUiCreateOverlayButton(g_ui.startupPanel, "QUITTIEREN");
-    lv_obj_set_width(g_ui.startupAckBtn, lv_pct(100));
-    lv_obj_add_event_cb(g_ui.startupAckBtn, hmiUiOnStartupAckClicked, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
-
-    g_ui.retryOverlay = lv_obj_create(screen);
-    lv_obj_set_size(g_ui.retryOverlay, lv_pct(100), lv_pct(100));
-    lv_obj_align(g_ui.retryOverlay, LV_ALIGN_CENTER, 0, 0);
-    lv_obj_set_style_bg_opa(g_ui.retryOverlay, LV_OPA_70, 0);
-    lv_obj_set_style_bg_color(g_ui.retryOverlay, lv_color_black(), 0);
-    lv_obj_set_style_border_width(g_ui.retryOverlay, 0, 0);
-    lv_obj_set_style_pad_all(g_ui.retryOverlay, 0, 0);
-
-    g_ui.retryPanel = lv_obj_create(g_ui.retryOverlay);
-    lv_obj_set_width(g_ui.retryPanel, lv_pct(82));
-    lv_obj_set_height(g_ui.retryPanel, LV_SIZE_CONTENT);
-    lv_obj_center(g_ui.retryPanel);
-    lv_obj_set_style_radius(g_ui.retryPanel, 14, 0);
-    lv_obj_set_style_pad_all(g_ui.retryPanel, 16, 0);
-    lv_obj_set_layout(g_ui.retryPanel, LV_LAYOUT_FLEX);
-    lv_obj_set_flex_flow(g_ui.retryPanel, LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_flex_align(g_ui.retryPanel, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
-    lv_obj_set_style_pad_row(g_ui.retryPanel, 10, 0);
-
-    g_ui.retryTitle = lv_label_create(g_ui.retryPanel);
-    lv_label_set_text(g_ui.retryTitle, "Weichentest laeuft");
-    lv_obj_set_style_text_font(g_ui.retryTitle, &lv_font_montserrat_26, 0);
-
-    g_ui.retryText = lv_label_create(g_ui.retryPanel);
-    lv_obj_set_width(g_ui.retryText, lv_pct(100));
-    lv_label_set_long_mode(g_ui.retryText, LV_LABEL_LONG_WRAP);
-    lv_label_set_text(g_ui.retryText, "Bitte warten ...");
-
-    g_ui.retryStatus = lv_label_create(g_ui.retryPanel);
-    lv_obj_set_width(g_ui.retryStatus, lv_pct(100));
-    lv_label_set_long_mode(g_ui.retryStatus, LV_LABEL_LONG_WRAP);
-
-    g_ui.retryCloseBtn = hmiUiCreateOverlayButton(g_ui.retryPanel, "AUSBLENDEN");
-    lv_obj_set_width(g_ui.retryCloseBtn, lv_pct(100));
-    lv_obj_add_event_cb(g_ui.retryCloseBtn, hmiUiOnRetryCloseClicked, LV_EVENT_CLICKED, nullptr);
-    lv_obj_add_flag(g_ui.retryOverlay, LV_OBJ_FLAG_HIDDEN);
-
-    lv_obj_add_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
-
-    hmiUiUpdate();
-}
-
-static void hmiDebugExtractStatusFromJson(const char* json) {
-    if (!json) {
+static void hmiUiUpdate() {
+    if (!g_ui.powerBtn || !g_ui.powerOffBtn || !g_ui.autoBtn) {
         return;
     }
 
-    struct ParsedState {
+    // Overlay-Guard:
+    // Wenn ein Overlay aktiv ist, nur die Overlays selbst aktualisieren und
+    // den restlichen UI-Refresh fuer diesen Zyklus komplett auslassen.
+    // So laufen nicht Mega1-/Rechtsseiten-Updates parallel zum Overlay.
+    if (hmiStartupOverlayActive() || hmiRetryOverlayActive()) {
+        hmiStartupOverlayUpdate();
+        hmiRetryOverlayUpdate();
+        g_overlayCacheInit = false;
+        return;
+    }
+
+    const bool canM1Test = hmiCanSendM1TestNow();
+    const bool canM2Test = hmiCanSendM2TestNow();
+    const bool canPowerOn = hmiCanSendPowerNow();
+    const bool canPowerOff = hmiCanSendPowerOffNow();
+    const bool canAuto = hmiCanSendAutoNow();
+    const bool canManual = hmiCanSendManualNow();
+    const bool canWrite = g_dbg.actionCanWrite;
+    const bool diagLease = g_dbg.diagActive;
+    const bool autoIsEnabled = g_dbg.mega1ModeAuto ? canManual : canAuto;
+    // Selektive Tab-Updates:
+    // Nur der aktive linke Tab wird neu aufgebaut, um unnötige Redraws zu vermeiden.
+    const uint32_t activeLeftTab =
+        g_ui.leftTabview ? (uint32_t)lv_tabview_get_tab_act(g_ui.leftTabview) : 0u;
+    const bool updateWeichenTab = (activeLeftTab == 0u);
+    const bool updateBahnhofTab = (activeLeftTab == 1u);
+    const bool updateBlocksTab = (activeLeftTab == 2u);
+
+    // WICHTIG:
+    // Die linken Tabs werden bewusst nur selektiv aktualisiert.
+    // Hintergrund:
+    // - LVGL-Rebuilds ganzer Tab-Inhalte sind auf dem 7"-Panel sichtbar teuer.
+    // - Die Inhalte der inaktiven Tabs muessen nicht in jedem Zyklus neu gesetzt werden.
+    // - So bleiben Tab-Wechsel, Overlay und Statusbereich fluessig.
+    // Der rechte Bereich bleibt davon unberuehrt und wird weiterhin separat
+    // ueber Render-Caches / Dirty-Zustaende gepflegt.
+
+    const bool updateDebugTab = (activeLeftTab == 3u);
+    const bool enteringBlocksTab = (activeLeftTab == 2u) && (g_lastActiveLeftTab != 2u);
+
+    bool m1Warn = false;
+    bool m2Warn = false;
+    
+    char safetyValue[40];
+    char warningValue[20];
+    char wsDiagValue[48];
+    char lockValue[96];
+    char ethValue[64];
+    char trafoABuf[40];
+    char trafoBBuf[40];
+    char m2DefectBuf[96];
+    char m1DefectBuf[96];
+
+    const bool safetyWarn = g_dbg.safetyLock || g_dbg.safetyAckRequired || g_dbg.safetyNotausActive;
+
+    m1Warn = g_dbg.mega1Online && g_dbg.startupM1Needs && (!g_dbg.startupM1SelftestDone);
+    m2Warn = g_dbg.mega2Online && g_dbg.startupM2Needs && (!g_dbg.startupM2SelftestDone);
+
+    const bool showM2Defect = hmiHasMega2Defects();
+    const bool showM1Defect = hmiHasMega1Defects();
+    const bool warningActive = g_dbg.summaryWarningPresent || showM1Defect || showM2Defect || safetyWarn || m1Warn || m2Warn;
+
+    if (g_dbg.safetyNotausActive) {
+        snprintf(safetyValue, sizeof(safetyValue), "NOT-AUS");
+    } else if (g_dbg.safetyAckRequired) {
+        snprintf(safetyValue, sizeof(safetyValue), "ACK");
+    } else if (g_dbg.safetyLock) {
+        snprintf(safetyValue, sizeof(safetyValue), "LOCK");
+    } else {
+        snprintf(safetyValue, sizeof(safetyValue), "OK");
+    }
+    snprintf(warningValue, sizeof(warningValue), "%s", warningActive ? "AKTIV" : "AUS");
+    snprintf(wsDiagValue, sizeof(wsDiagValue), "%lu / %s",
+             (unsigned long)g_dbg.wsClients,
+             diagLease ? "LEASE" : "FREI");
+    if (canWrite) {
+        snprintf(lockValue, sizeof(lockValue), "Bedienung frei");
+    } else if (diagLease && g_dbg.diagOwner[0] && strcmp(g_dbg.diagOwner, "-") != 0) {
+        snprintf(lockValue, sizeof(lockValue), "Bedienung gesperrt (Diag: %s)", g_dbg.diagOwner);
+    } else if (diagLease) {
+        snprintf(lockValue, sizeof(lockValue), "Bedienung gesperrt (Diag-Lease)");
+    } else {
+        snprintf(lockValue, sizeof(lockValue), "Bedienung gesperrt");
+    }
+
+    if (g_dbg.ethConnected) {
+        if (g_dbg.ethIp[0] != '\0' && strcmp(g_dbg.ethIp, "-") != 0) {
+            snprintf(ethValue, sizeof(ethValue), "%s", g_dbg.ethIp);
+        } else {
+            snprintf(ethValue, sizeof(ethValue), "-");
+        }
+    } else {
+        snprintf(ethValue, sizeof(ethValue), "OFFLINE");
+    }
+
+    snprintf(trafoABuf, sizeof(trafoABuf), "Trafo oben: %u.%u V", (unsigned)(g_dbg.analogVA10 / 10u), (unsigned)(g_dbg.analogVA10 % 10u));
+    snprintf(trafoBBuf, sizeof(trafoBBuf), "Trafo unten: %u.%u V", (unsigned)(g_dbg.analogVB10 / 10u), (unsigned)(g_dbg.analogVB10 % 10u));
+    snprintf(m2DefectBuf, sizeof(m2DefectBuf), showM2Defect ? "SBHF: %s" : "SBHF: Keine Defekte", g_dbg.mega2DefectList);
+    snprintf(m1DefectBuf, sizeof(m1DefectBuf), showM1Defect ? "Mega1: %s" : "Mega1: Keine Defekte", g_dbg.mega1DefectList);
+
+    const bool showDefectRow = (showM1Defect || showM2Defect);
+
+    hmiSetCachedStatusCell(
+        g_ui.rowEthValue, g_ui.rowEthValueLabel,
+        g_rightPanelRenderCache.ethValue, sizeof(g_rightPanelRenderCache.ethValue),
+        g_rightPanelRenderCache.init,
+        ethValue,
+        g_dbg.ethConnected ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_RED)
+    );
+    const char* mega1Value = !g_dbg.mega1Online ? "OFFLINE" : (m1Warn ? "WARNUNG" : "ONLINE");
+    hmiSetCachedStatusCell(
+        g_ui.rowMega1Value, g_ui.rowMega1ValueLabel,
+        g_rightPanelRenderCache.mega1Value, sizeof(g_rightPanelRenderCache.mega1Value),
+        g_rightPanelRenderCache.init,
+        mega1Value,
+        !g_dbg.mega1Online ? lv_palette_main(LV_PALETTE_RED) : (m1Warn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN))
+    );
+    const char* mega2Value = !g_dbg.mega2Online ? "OFFLINE" : (m2Warn ? "WARNUNG" : "ONLINE");
+    hmiSetCachedStatusCell(
+        g_ui.rowMega2Value, g_ui.rowMega2ValueLabel,
+        g_rightPanelRenderCache.mega2Value, sizeof(g_rightPanelRenderCache.mega2Value),
+        g_rightPanelRenderCache.init,
+        mega2Value,
+        !g_dbg.mega2Online ? lv_palette_main(LV_PALETTE_RED) : (m2Warn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN))
+    );
+    hmiSetCachedStatusCell(
+        g_ui.rowSafetyValue, g_ui.rowSafetyValueLabel,
+        g_rightPanelRenderCache.safetyValue, sizeof(g_rightPanelRenderCache.safetyValue),
+        g_rightPanelRenderCache.init,
+        safetyValue,
+        safetyWarn ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_main(LV_PALETTE_GREEN)
+    );
+    hmiSetCachedStatusCell(
+        g_ui.rowWarningValue, g_ui.rowWarningValueLabel,
+        g_rightPanelRenderCache.warningValue, sizeof(g_rightPanelRenderCache.warningValue),
+        g_rightPanelRenderCache.init,
+        warningValue,
+        warningActive ? lv_palette_main(LV_PALETTE_ORANGE) : lv_palette_darken(LV_PALETTE_GREY, 2)
+    );
+    const char* powerValue = g_dbg.safetyPowerOn ? "AN" : "AUS";
+    hmiSetCachedStatusCell(
+        g_ui.rowPowerValue, g_ui.rowPowerValueLabel,
+        g_rightPanelRenderCache.powerValue, sizeof(g_rightPanelRenderCache.powerValue),
+        g_rightPanelRenderCache.init,
+        powerValue,
+        g_dbg.safetyPowerOn ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_darken(LV_PALETTE_GREY, 2)
+    );
+    const char* modeValue = g_dbg.mega1ModeAuto ? "AUTO" : "MANUELL";
+    hmiSetCachedStatusCell(
+        g_ui.rowModeValue, g_ui.rowModeValueLabel,
+        g_rightPanelRenderCache.modeValue, sizeof(g_rightPanelRenderCache.modeValue),
+        g_rightPanelRenderCache.init,
+        modeValue,
+        g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_BLUE)
+    );
+    hmiSetCachedStatusCell(
+        g_ui.rowWsDiagValue, g_ui.rowWsDiagValueLabel,
+        g_rightPanelRenderCache.wsDiagValue, sizeof(g_rightPanelRenderCache.wsDiagValue),
+        g_rightPanelRenderCache.init,
+        wsDiagValue,
+        (g_dbg.wsClients > 0) ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_darken(LV_PALETTE_GREY, 2)
+    );
+
+    hmiUiSetButtonEnabled(
+        g_ui.powerBtn,
+        g_ui.powerBtnLabel,
+        canPowerOn,
+        "POWER ON"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.powerOffBtn,
+        g_ui.powerOffBtnLabel,
+        canPowerOff,
+        "STOP / POWER OFF"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.autoBtn,
+        g_ui.autoBtnLabel,
+        autoIsEnabled,
+        g_dbg.mega1ModeAuto ? "MANUELL" : "AUTO"
+    );
+
+    hmiUiSetActionButtonColor(g_ui.powerBtn, lv_palette_main(LV_PALETTE_GREEN));
+    hmiUiSetActionButtonColor(g_ui.powerOffBtn, lv_palette_main(LV_PALETTE_RED));
+    hmiUiSetActionButtonColor(g_ui.autoBtn,
+        g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_BLUE)
+                            : lv_palette_main(LV_PALETTE_GREEN));
+
+    if (g_ui.powerLed &&
+        (!g_rightPanelRenderCache.init ||
+         g_rightPanelRenderCache.powerLedOn != g_dbg.safetyPowerOn)) {
+        const lv_color_t c = g_dbg.safetyPowerOn ? lv_palette_main(LV_PALETTE_GREEN)
+                                                 : lv_palette_darken(LV_PALETTE_GREY, 2);
+        lv_obj_set_style_bg_color(g_ui.powerLed, c, 0);
+        lv_obj_set_style_border_color(g_ui.powerLed, c, 0);
+        lv_obj_set_style_shadow_color(g_ui.powerLed, c, 0);
+        lv_obj_set_style_shadow_opa(g_ui.powerLed, g_dbg.safetyPowerOn ? LV_OPA_70 : LV_OPA_30, 0);
+        g_rightPanelRenderCache.powerLedOn = g_dbg.safetyPowerOn;
+    }
+    
+    if (g_ui.autoLed &&
+        (!g_rightPanelRenderCache.init ||
+         g_rightPanelRenderCache.modeLedOn != g_dbg.mega1ModeAuto)) {
+        const lv_color_t c = g_dbg.mega1ModeAuto ? lv_palette_main(LV_PALETTE_GREEN)
+                                                 : lv_palette_darken(LV_PALETTE_GREY, 2);
+        lv_obj_set_style_bg_color(g_ui.autoLed, c, 0);
+        lv_obj_set_style_border_color(g_ui.autoLed, c, 0);
+        lv_obj_set_style_shadow_color(g_ui.autoLed, c, 0);
+        lv_obj_set_style_shadow_opa(g_ui.autoLed, g_dbg.mega1ModeAuto ? LV_OPA_70 : LV_OPA_30, 0);
+        g_rightPanelRenderCache.modeLedOn = g_dbg.mega1ModeAuto;
+    }
+
+    if (g_ui.lockLabel && (!g_rightPanelRenderCache.init || strChanged(g_rightPanelRenderCache.lockValue, lockValue))) {
+        hmiSetCachedLabelText(
+            g_ui.lockLabel,
+            g_rightPanelRenderCache.lockValue, sizeof(g_rightPanelRenderCache.lockValue),
+            g_rightPanelRenderCache.init, lockValue
+        );
+        lv_obj_set_style_text_color(
+            g_ui.lockLabel,
+            canWrite ? lv_palette_main(LV_PALETTE_GREEN) : lv_palette_main(LV_PALETTE_ORANGE),
+            0
+        );
+    }
+    hmiSetCachedLabelText(
+        g_ui.m1DefectLabel,
+        g_rightPanelRenderCache.m1DefectBuf, sizeof(g_rightPanelRenderCache.m1DefectBuf),
+        g_rightPanelRenderCache.init, m1DefectBuf
+    );
+    hmiSetCachedLabelText(
+        g_ui.m2DefectLabel,
+        g_rightPanelRenderCache.m2DefectBuf, sizeof(g_rightPanelRenderCache.m2DefectBuf),
+        g_rightPanelRenderCache.init, m2DefectBuf
+    );
+    if (g_ui.detailLabel) {
+        lv_label_set_text(g_ui.detailLabel, "");
+    }
+
+    if (g_ui.defectPanel) {
+        lv_obj_clear_flag(g_ui.defectPanel, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    if (!g_rightPanelRenderCache.init || g_rightPanelRenderCache.showDefectRow != showDefectRow) {
+        if (showDefectRow && g_ui.defectRow) {
+            lv_obj_clear_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
+        } else if (g_ui.defectRow) {
+            lv_obj_add_flag(g_ui.defectRow, LV_OBJ_FLAG_HIDDEN);
+        }
+        g_rightPanelRenderCache.showDefectRow = showDefectRow;
+    }
+
+    hmiUiSetButtonEnabled(
+        g_ui.m2RetryBtn,
+        g_ui.m2RetryBtnLabel,
+        showM2Defect && hmiCanSendM2RetryNow(),
+        "SBHF RETRY"
+    );
+    hmiUiSetButtonEnabled(
+        g_ui.m1RetryBtn,
+        g_ui.m1RetryBtnLabel,
+        showM1Defect && hmiCanSendM1RetryNow(),
+        "MEGA1 RETRY"
+    );
+    hmiUiSetActionButtonColor(g_ui.m2RetryBtn, lv_palette_main(LV_PALETTE_BLUE));
+    hmiUiSetActionButtonColor(g_ui.m1RetryBtn, lv_palette_main(LV_PALETTE_BLUE));
+
+    if (updateBahnhofTab) for (uint8_t i = 0; i < 4u; ++i) {
+        const bool isOn = ((g_dbg.mega1BahnhofMask & (1u << i)) != 0u);
+        const bool valid = g_dbg.mega1Online;
+        const bool canToggle = hmiCanSendBhfPowerNow();
+
+        if (g_ui.bahnhofLedGreen[i] && g_ui.bahnhofLedRed[i]) {
+            const bool changed =
+                !g_bahnhofRenderCache[i].init ||
+                g_bahnhofRenderCache[i].valid != valid ||
+                g_bahnhofRenderCache[i].isOn != isOn;
+
+            if (changed) {
+                lv_color_t colGreen;
+                lv_color_t colRed;
+
+                if (!valid) {
+                    colGreen = lv_palette_main(LV_PALETTE_GREY);
+                    colRed   = lv_palette_main(LV_PALETTE_GREY);
+                }
+                else if (isOn) {
+                    colGreen = lv_palette_main(LV_PALETTE_GREEN);
+                    colRed   = lv_palette_main(LV_PALETTE_GREY);
+                }
+                else {
+                    colGreen = lv_palette_main(LV_PALETTE_GREY);
+                    colRed   = lv_palette_main(LV_PALETTE_RED);
+                }
+
+                lv_obj_set_style_bg_color(g_ui.bahnhofLedGreen[i], colGreen, 0);
+                lv_obj_set_style_border_color(g_ui.bahnhofLedGreen[i], colGreen, 0);
+                lv_obj_set_style_bg_opa(g_ui.bahnhofLedGreen[i], LV_OPA_COVER, 0);
+                lv_obj_set_style_shadow_color(g_ui.bahnhofLedGreen[i], colGreen, 0);
+                lv_obj_set_style_shadow_opa(g_ui.bahnhofLedGreen[i], valid && isOn ? LV_OPA_70 : LV_OPA_30, 0);
+
+                lv_obj_set_style_bg_color(g_ui.bahnhofLedRed[i], colRed, 0);
+                lv_obj_set_style_border_color(g_ui.bahnhofLedRed[i], colRed, 0);
+                lv_obj_set_style_bg_opa(g_ui.bahnhofLedRed[i], LV_OPA_COVER, 0);
+                lv_obj_set_style_shadow_color(g_ui.bahnhofLedRed[i], colRed, 0);
+                lv_obj_set_style_shadow_opa(g_ui.bahnhofLedRed[i], valid && !isOn ? LV_OPA_70 : LV_OPA_30, 0);
+            }
+        }
+
+        if (g_ui.bahnhofToggleBtn[i] && g_ui.bahnhofToggleBtnLabel[i]) {
+            const bool changed =
+                !g_bahnhofRenderCache[i].init ||
+                g_bahnhofRenderCache[i].isOn != isOn ||
+                g_bahnhofRenderCache[i].canToggle != canToggle;
+
+            if (changed) {
+                char btnText[16];
+                snprintf(btnText, sizeof(btnText), isOn ? "AUS" : "EIN");
+
+                hmiUiSetButtonEnabled(
+                    g_ui.bahnhofToggleBtn[i],
+                    g_ui.bahnhofToggleBtnLabel[i],
+                    canToggle,
+                    btnText
+                );
+
+                hmiUiSetActionButtonColor(
+                    g_ui.bahnhofToggleBtn[i],
+                    lv_palette_main(LV_PALETTE_BLUE)
+                );
+            }
+        }
+
+        g_bahnhofRenderCache[i].init = true;
+        g_bahnhofRenderCache[i].valid = valid;
+        g_bahnhofRenderCache[i].isOn = isOn;
+        g_bahnhofRenderCache[i].canToggle = canToggle;
+    }
+
+    if (updateWeichenTab) {
+        const bool valid = g_dbg.mega1Online;
+
+        if (g_ui.mega1WeicheSummaryLabel[0] &&
+            g_ui.mega1WeicheSummaryLabel[1] &&
+            g_ui.mega1WeicheSummaryLabel[2]) {
+            for (uint8_t row = 0; row < 3u; ++row) {
+                char rowBuf[192];
+                rowBuf[0] = '\0';
+                for (uint8_t col = 0; col < 4u; ++col) {
+                    const uint8_t i = (uint8_t)(row * 4u + col);
+                    const bool istGerade = ((g_dbg.mega1WeicheIstGeradeBits & (1u << i)) != 0u);
+                    const bool sollGerade = ((g_dbg.mega1WeicheSollGeradeBits & (1u << i)) != 0u);
+                    char part[48];
+
+                    hmiBuildWeicheSummaryPart(
+                        part,
+                        sizeof(part),
+                        i,
+                        valid,
+                        istGerade,
+                        sollGerade
+                    );
+
+                    if (col != 0u) strncat(rowBuf, "  ", sizeof(rowBuf) - strlen(rowBuf) - 1u);
+                    if (i < 10u) strncat(rowBuf, " ", sizeof(rowBuf) - strlen(rowBuf) - 1u);
+                    strncat(rowBuf, part, sizeof(rowBuf) - strlen(rowBuf) - 1u);
+                }
+                lv_label_set_text(g_ui.mega1WeicheSummaryLabel[row], rowBuf);
+                lv_obj_set_style_text_color(g_ui.mega1WeicheSummaryLabel[row],
+                    valid ? lv_color_white() : lv_palette_lighten(LV_PALETTE_GREY, 1), 0);
+            }
+        }
+    }
+
+
+    if (updateWeichenTab) for (uint8_t row = 0; row < 2u; ++row) {
+        if (!g_ui.sbhfSummaryLabel[row]) { continue; }
+        const uint8_t localA = (uint8_t)(row * 2u);
+        const uint8_t localB = (uint8_t)(localA + 1u);
+        const uint8_t idxA = localA;
+        const uint8_t idxB = localB;
+        const uint8_t turnoutA = (uint8_t)(12u + localA);
+        const uint8_t turnoutB = (uint8_t)(12u + localB);
+
+        const bool valid = g_dbg.mega2Online;
+        const bool istA = ((g_dbg.mega2TurnoutIstMask & (1u << idxA)) == 0u);
+        const bool sollA = ((g_dbg.mega2TurnoutSollMask & (1u << idxA)) != 0u);
+        const bool istB = ((g_dbg.mega2TurnoutIstMask & (1u << idxB)) == 0u);
+        const bool sollB = ((g_dbg.mega2TurnoutSollMask & (1u << idxB)) != 0u);
+        const bool mismatchA = valid && (istA != sollA);
+        const bool mismatchB = valid && (istB != sollB);
+
+        char partA[48];
+        char partB[48];
+        char rowBuf[128];
+
+        hmiBuildWeicheSummaryPart(
+            partA,
+            sizeof(partA),
+            turnoutA,
+            valid,
+            istA,
+            sollA
+        );
+
+        hmiBuildWeicheSummaryPart(
+            partB,
+            sizeof(partB),
+            turnoutB,
+            valid,
+            istB,
+            sollB
+        );
+
+        snprintf(
+            rowBuf, sizeof(rowBuf),
+            "%s   %s",
+            partA, partB
+        );
+        lv_label_set_text(g_ui.sbhfSummaryLabel[row], rowBuf);
+        lv_obj_set_style_text_color(
+            g_ui.sbhfSummaryLabel[row],
+            valid ? lv_color_white() : lv_palette_lighten(LV_PALETTE_GREY, 1),
+            0
+        );
+    }
+
+    if (updateBlocksTab && g_ui.blocksTabLabel) {
+        if (enteringBlocksTab && !g_blocksTabPrimed) {
+            // Ersten Live-Refresh beim allerersten Betreten des Blocks-Tabs
+            // bewusst um genau einen UI-Zyklus verschieben.
+            g_blocksTabPrimed = true;
+            g_stateUiPending = true;
+            g_stateUiPendingSinceMs = millis() - HMI_STATE_UI_COALESCE_MS;
+        } else {
+            char blocksBuf[1024];
+            hmiBuildBlocksTabText(blocksBuf, sizeof(blocksBuf));
+            lv_label_set_text(g_ui.blocksTabLabel, blocksBuf);
+        }
+    }
+
+    if (updateDebugTab && g_ui.debugTabLabel) {
+        char dbgBuf[768];
+        hmiBuildDebugTabText(dbgBuf, sizeof(dbgBuf));
+        lv_label_set_text(g_ui.debugTabLabel, dbgBuf);
+    }
+
+    hmiSetCachedLabelText(
+        g_ui.trafoLabelA,
+        g_rightPanelRenderCache.trafoABuf, sizeof(g_rightPanelRenderCache.trafoABuf),
+        g_rightPanelRenderCache.init, trafoABuf
+    );
+    hmiSetCachedLabelText(
+        g_ui.trafoLabelB,
+        g_rightPanelRenderCache.trafoBBuf, sizeof(g_rightPanelRenderCache.trafoBBuf),
+        g_rightPanelRenderCache.init, trafoBBuf
+    );
+
+    g_rightPanelRenderCache.init = true;
+
+    const uint32_t nowMs = millis();
+
+    uint32_t startupOverlayHash = 0;
+    startupOverlayHash ^= g_dbg.startupChecklistActive ? (1u << 0) : 0u;
+    startupOverlayHash ^= g_dbg.startupM1Needs ? (1u << 1) : 0u;
+    startupOverlayHash ^= g_dbg.startupM2Needs ? (1u << 2) : 0u;
+    startupOverlayHash ^= g_dbg.startupM1SelftestDone ? (1u << 3) : 0u;
+    startupOverlayHash ^= g_dbg.startupM2SelftestDone ? (1u << 4) : 0u;
+    startupOverlayHash ^= g_dbg.startupM1SelftestRunning ? (1u << 5) : 0u;
+    startupOverlayHash ^= g_dbg.startupM2SelftestRunning ? (1u << 6) : 0u;
+    startupOverlayHash ^= g_dbg.safetyAckRequired ? (1u << 7) : 0u;
+    startupOverlayHash ^= g_dbg.safetyLock ? (1u << 8) : 0u;
+    startupOverlayHash ^= g_dbg.safetyNotausActive ? (1u << 9) : 0u;
+    startupOverlayHash ^= g_dbg.systemReady ? (1u << 10) : 0u;
+    startupOverlayHash ^= g_dbg.mega1Online ? (1u << 11) : 0u;
+    startupOverlayHash ^= g_dbg.mega2Online ? (1u << 12) : 0u;
+    startupOverlayHash ^= g_dbg.ethConnected ? (1u << 13) : 0u;
+    startupOverlayHash ^= g_dbg.actionCanWrite ? (1u << 14) : 0u;
+    startupOverlayHash ^= g_dbg.actionCanStartM1Selftest ? (1u << 15) : 0u;
+    startupOverlayHash ^= g_dbg.actionCanStartM2Selftest ? (1u << 16) : 0u;
+    startupOverlayHash ^= g_dbg.actionCanStartupConfirm ? (1u << 17) : 0u;
+    startupOverlayHash ^= g_pendingStartupM1 ? (1u << 18) : 0u;
+    startupOverlayHash ^= g_pendingStartupM2 ? (1u << 19) : 0u;
+    startupOverlayHash ^= g_pendingStartupAck ? (1u << 20) : 0u;
+
+    uint32_t retryOverlayHash = 0;
+    retryOverlayHash ^= g_dbg.uiStartupOverlayActive ? (1u << 0) : 0u;
+    retryOverlayHash ^= g_dbg.uiM1RetryOverlayActive ? (1u << 1) : 0u;
+    retryOverlayHash ^= g_dbg.uiM2RetryOverlayActive ? (1u << 2) : 0u;
+    retryOverlayHash ^= g_retrySessionM1Active ? (1u << 3) : 0u;
+    retryOverlayHash ^= g_retrySessionM2Active ? (1u << 4) : 0u;
+    retryOverlayHash ^= g_retryOverlayDismissed ? (1u << 5) : 0u;
+    retryOverlayHash ^= g_dbg.startupM1SelftestRunning ? (1u << 6) : 0u;
+    retryOverlayHash ^= g_dbg.startupM2SelftestRunning ? (1u << 7) : 0u;
+    retryOverlayHash ^= g_pendingM1Retry ? (1u << 8) : 0u;
+    retryOverlayHash ^= g_pendingM2Retry ? (1u << 9) : 0u;
+    retryOverlayHash ^= ((uint32_t)(uint8_t)g_dbg.uiOverlayMode[0] << 16);
+    retryOverlayHash ^= ((uint32_t)(uint8_t)g_dbg.uiRetryScope[0] << 24);
+
+    if (!g_overlayCacheInit ||
+        startupOverlayHash != g_lastStartupOverlayHash ||
+        (uint32_t)(nowMs - g_lastStartupOverlayUpdateMs) >= HMI_OVERLAY_REFRESH_MS) {
+        // KRITISCH:
+        // Das Startup-Overlay hat Vorrang vor dem restlichen UI-Zyklus.
+        // Sobald es aktiv ist, wird es zuerst aktualisiert und der restliche
+        // Zyklus bewusst abgebrochen. Dadurch vermeiden wir Flackern,
+        // konkurrierende Sichtbarkeits-/Enable-Updates und unnötige
+        // Redraws unterhalb des Overlays.
+        //
+        // Dieses return ist absichtlich und Teil des Stabilitaets-Fixes.
+        // --- NEU: Overlay hat Priorität, restlichen UI-Zyklus abbrechen ---
+        if (hmiStartupOverlayActive()) {
+            hmiStartupOverlayUpdate();
+
+            g_lastStartupOverlayHash = startupOverlayHash;
+            g_lastStartupOverlayUpdateMs = nowMs;
+
+            return; // <<< KRITISCH: keine weiteren UI-Updates in diesem Zyklus
+        }
+
+        hmiStartupOverlayUpdate();
+        g_lastStartupOverlayHash = startupOverlayHash;
+        g_lastStartupOverlayUpdateMs = nowMs;
+    }
+
+    if (!g_overlayCacheInit ||
+        retryOverlayHash != g_lastRetryOverlayHash ||
+        (uint32_t)(nowMs - g_lastRetryOverlayUpdateMs) >= HMI_OVERLAY_REFRESH_MS) {
+        hmiRetryOverlayUpdate();
+        g_lastRetryOverlayHash = retryOverlayHash;
+        g_lastRetryOverlayUpdateMs = nowMs;
+    }
+
+    g_overlayCacheInit = true;
+    g_lastActiveLeftTab = activeLeftTab;
+}
+
+// Merge-Arbeitszustand fuer hmiDebugExtractStatusFromJson().
+//
+// Prinzip:
+//   1) ParsedState wird zuerst aus dem aktuellen g_dbg vorbelegt
+//      (Seed / "letzter bekannter Zustand")
+//   2) Nur im aktuellen JSON wirklich vorhandene Felder ueberschreiben
+//      diesen Arbeitszustand
+//   3) Das Ergebnis wird gesammelt zurueck nach g_dbg uebernommen
+//
+// Dadurch bleiben partielle Nachrichten robust:
+// Fehlende Felder bedeuten "unveraendert lassen" und NICHT "false/0 setzen".
+struct ParsedState {
+        // Verbindungs-/Systemstatus
         bool mega1Online = false;
         bool mega2Online = false;
         bool safetyLock = false;
@@ -2962,6 +3043,7 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         bool systemReady = false;
         uint32_t wsClients = 0;
 
+        // Startup-/Checklist-Status
         bool startupM1SelftestDone = false;
         bool startupM2SelftestDone = false;
         bool startupM1SelftestRunning = false;
@@ -2970,6 +3052,7 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         bool startupM1Needs = false;
         bool startupM2Needs = false;
 
+        // Safety / Betriebsmodus
         bool safetyAckRequired = false;
         bool safetyNotausActive = false;
         bool safetyPowerOn = false;
@@ -2987,6 +3070,8 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         bool actionCanWrite = false;
         bool mega1SelftestRetryAvailable = false;
         bool mega2SelftestRetryAvailable = false;
+        
+        // Nutzdaten fuer Tabs / rechte Statusseite
         uint8_t mega1BahnhofMask = 0;
         uint16_t mega1WeicheIstGeradeBits = 0;
         uint16_t mega1WeicheSollGeradeBits = 0;
@@ -2996,6 +3081,8 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         uint16_t mega2SignalGrantMask = 0;
         bool mega2BlockOccValid = false;
         bool mega2SignalGrantValid = false;
+
+        // UI-/Overlay-bezogene Zustandsinfos
         bool uiStartupOverlayActive = false;
         bool uiM1RetryOverlayActive = false;
         bool uiM2RetryOverlayActive = false;
@@ -3004,74 +3091,156 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         char mega1DefectList[64] = "";
         char mega2DefectList[32] = "";
 
+        // Diag-/ETH-Kontext
         bool diagActive = false;
         char ethIp[16] = "-";
         char diagOwner[16] = "-";
-    };
+};
+
+// Seed-Schritt:
+// ParsedState startet bewusst als Kopie des aktuellen Debug-/UI-Zustands.
+// Erst danach werden die im JSON vorhandenen Felder selektiv daruebergelegt.
+static void hmiSeedParsedStateFromCurrent(ParsedState& dst) {
+    dst.mega1Online = g_dbg.mega1Online;
+    dst.mega2Online = g_dbg.mega2Online;
+    dst.safetyLock = g_dbg.safetyLock;
+    dst.ethConnected = g_dbg.ethConnected;
+    dst.systemReady = g_dbg.systemReady;
+    dst.wsClients = g_dbg.wsClients;
+
+    dst.startupM1SelftestDone = g_dbg.startupM1SelftestDone;
+    dst.startupM2SelftestDone = g_dbg.startupM2SelftestDone;
+    dst.startupM1SelftestRunning = g_dbg.startupM1SelftestRunning;
+    dst.startupM2SelftestRunning = g_dbg.startupM2SelftestRunning;
+    dst.startupChecklistActive = g_dbg.startupChecklistActive;
+    dst.startupM1Needs = g_dbg.startupM1Needs;
+    dst.startupM2Needs = g_dbg.startupM2Needs;
+
+    dst.safetyAckRequired = g_dbg.safetyAckRequired;
+    dst.safetyNotausActive = g_dbg.safetyNotausActive;
+    dst.safetyPowerOn = g_dbg.safetyPowerOn;
+    dst.mega1ModeAuto = g_dbg.mega1ModeAuto;
+
+    dst.actionCanAck = g_dbg.actionCanAck;
+    dst.actionCanPowerOn = g_dbg.actionCanPowerOn;
+    dst.actionCanPowerOff = g_dbg.actionCanPowerOff;
+    dst.actionCanAuto = g_dbg.actionCanAuto;
+    dst.actionCanManual = g_dbg.actionCanManual;
+    dst.actionCanStartM1Selftest = g_dbg.actionCanStartM1Selftest;
+    dst.actionCanStartM2Selftest = g_dbg.actionCanStartM2Selftest;
+    dst.actionCanStartupConfirm = g_dbg.actionCanStartupConfirm;
+    dst.summaryWarningPresent = g_dbg.summaryWarningPresent;
+    dst.actionCanWrite = g_dbg.actionCanWrite;
+    dst.mega1SelftestRetryAvailable = g_dbg.mega1SelftestRetryAvailable;
+    dst.mega2SelftestRetryAvailable = g_dbg.mega2SelftestRetryAvailable;
+
+    dst.mega1BahnhofMask = g_dbg.mega1BahnhofMask;
+    dst.mega1WeicheIstGeradeBits = g_dbg.mega1WeicheIstGeradeBits;
+    dst.mega1WeicheSollGeradeBits = g_dbg.mega1WeicheSollGeradeBits;
+    dst.mega2TurnoutIstMask = g_dbg.mega2TurnoutIstMask;
+    dst.mega2TurnoutSollMask = g_dbg.mega2TurnoutSollMask;
+    dst.mega2BlockOccMask = g_dbg.mega2BlockOccMask;
+    dst.mega2SignalGrantMask = g_dbg.mega2SignalGrantMask;
+    dst.mega2BlockOccValid = g_dbg.mega2BlockOccValid;
+    dst.mega2SignalGrantValid = g_dbg.mega2SignalGrantValid;
+
+    dst.uiStartupOverlayActive = g_dbg.uiStartupOverlayActive;
+    dst.uiM1RetryOverlayActive = g_dbg.uiM1RetryOverlayActive;
+    dst.uiM2RetryOverlayActive = g_dbg.uiM2RetryOverlayActive;
+    copyStr(dst.uiOverlayMode, sizeof(dst.uiOverlayMode), g_dbg.uiOverlayMode);
+    copyStr(dst.uiRetryScope, sizeof(dst.uiRetryScope), g_dbg.uiRetryScope);
+
+    copyStr(dst.mega1DefectList, sizeof(dst.mega1DefectList), g_dbg.mega1DefectList);
+    copyStr(dst.mega2DefectList, sizeof(dst.mega2DefectList), g_dbg.mega2DefectList);
+
+    dst.diagActive = g_dbg.diagActive;
+    copyStr(dst.ethIp, sizeof(dst.ethIp), g_dbg.ethIp);
+    copyStr(dst.diagOwner, sizeof(dst.diagOwner), g_dbg.diagOwner);
+}
+
+// Apply-Schritt:
+// Der fertig gemergte Arbeitszustand wird gesammelt in g_dbg uebernommen.
+// Parsing und Zustandsuebernahme bleiben damit bewusst getrennt.
+static void hmiApplyParsedState(const ParsedState& next) {
+    g_dbg.mega1Online = next.mega1Online;
+    g_dbg.mega2Online = next.mega2Online;
+    g_dbg.safetyLock = next.safetyLock;
+    g_dbg.ethConnected = next.ethConnected;
+    g_dbg.systemReady = next.systemReady;
+    g_dbg.wsClients = next.wsClients;
+
+    g_dbg.startupM1SelftestDone = next.startupM1SelftestDone;
+    g_dbg.startupM2SelftestDone = next.startupM2SelftestDone;
+    g_dbg.startupM1SelftestRunning = next.startupM1SelftestRunning;
+    g_dbg.startupM2SelftestRunning = next.startupM2SelftestRunning;
+    g_dbg.startupChecklistActive = next.startupChecklistActive;
+    g_dbg.startupM1Needs = next.startupM1Needs;
+    g_dbg.startupM2Needs = next.startupM2Needs;
+
+    g_dbg.safetyAckRequired = next.safetyAckRequired;
+    g_dbg.safetyNotausActive = next.safetyNotausActive;
+    g_dbg.safetyPowerOn = next.safetyPowerOn;
+    g_dbg.mega1ModeAuto = next.mega1ModeAuto;
+
+    g_dbg.actionCanAck = next.actionCanAck;
+    g_dbg.actionCanPowerOn = next.actionCanPowerOn;
+    g_dbg.actionCanPowerOff = next.actionCanPowerOff;
+    g_dbg.actionCanAuto = next.actionCanAuto;
+    g_dbg.actionCanManual = next.actionCanManual;
+    g_dbg.actionCanStartM1Selftest = next.actionCanStartM1Selftest;
+    g_dbg.actionCanStartM2Selftest = next.actionCanStartM2Selftest;
+    g_dbg.actionCanStartupConfirm = next.actionCanStartupConfirm;
+    g_dbg.summaryWarningPresent = next.summaryWarningPresent;
+    g_dbg.actionCanWrite = next.actionCanWrite;
+    g_dbg.mega1SelftestRetryAvailable = next.mega1SelftestRetryAvailable;
+    g_dbg.mega2SelftestRetryAvailable = next.mega2SelftestRetryAvailable;
+
+    g_dbg.mega1WeicheIstGeradeBits = next.mega1WeicheIstGeradeBits;
+    g_dbg.mega1WeicheSollGeradeBits = next.mega1WeicheSollGeradeBits;
+    g_dbg.mega2TurnoutIstMask = next.mega2TurnoutIstMask;
+    g_dbg.mega2TurnoutSollMask = next.mega2TurnoutSollMask;
+    g_dbg.mega2BlockOccMask = next.mega2BlockOccMask;
+    g_dbg.mega2SignalGrantMask = next.mega2SignalGrantMask;
+    g_dbg.mega2BlockOccValid = next.mega2BlockOccValid;
+    g_dbg.mega2SignalGrantValid = next.mega2SignalGrantValid;
+
+    g_dbg.uiStartupOverlayActive = next.uiStartupOverlayActive;
+    g_dbg.uiM1RetryOverlayActive = next.uiM1RetryOverlayActive;
+    g_dbg.uiM2RetryOverlayActive = next.uiM2RetryOverlayActive;
+    copyStr(g_dbg.uiOverlayMode, sizeof(g_dbg.uiOverlayMode), next.uiOverlayMode);
+    copyStr(g_dbg.uiRetryScope, sizeof(g_dbg.uiRetryScope), next.uiRetryScope);
+
+    g_dbg.mega1BahnhofMask = next.mega1BahnhofMask;
+    copyStr(g_dbg.mega1DefectList, sizeof(g_dbg.mega1DefectList), next.mega1DefectList);
+    copyStr(g_dbg.mega2DefectList, sizeof(g_dbg.mega2DefectList), next.mega2DefectList);
+
+    g_dbg.diagActive = next.diagActive;
+    copyStr(g_dbg.ethIp, sizeof(g_dbg.ethIp), next.ethIp);
+    copyStr(g_dbg.diagOwner, sizeof(g_dbg.diagOwner), next.diagOwner);
+}
+
+static void hmiDebugExtractStatusFromJson(const char* json) {
+    if (!json) {
+        return;
+    }
 
     const bool isStateLike = hmiJsonIsStateLike(json);
     ParsedState next;
 
+    // KRITISCH:
+    // Status-JSON wird hier nicht als "vollstaendige Wahrheit" behandelt,
+    // sondern als Merge auf den bestehenden Zustand.
+    //
+    // Grund:
+    // - Es gibt unterschiedliche Nachrichtentypen / Teilmengen (z. B. state,
+    //   state-lite oder andere JSON-Nachrichten).
+    // - Nicht jede Nachricht enthaelt jedes Feld.
+    // - Fehlende Felder duerfen deshalb NICHT implizit auf false/0 zurueckfallen.
+    //
+    // Erst danach werden die im aktuellen JSON vorhandenen Felder gezielt uebernommen.
+
     // 🔥 WICHTIG: Immer vom aktuellen Zustand starten (Merge!)
-    next.mega1Online = g_dbg.mega1Online;
-    next.mega2Online = g_dbg.mega2Online;
-    next.safetyLock = g_dbg.safetyLock;
-    next.ethConnected = g_dbg.ethConnected;
-    next.systemReady = g_dbg.systemReady;
-    next.wsClients = g_dbg.wsClients;
-
-    next.startupM1SelftestDone = g_dbg.startupM1SelftestDone;
-    next.startupM2SelftestDone = g_dbg.startupM2SelftestDone;
-    next.startupM1SelftestRunning = g_dbg.startupM1SelftestRunning;
-    next.startupM2SelftestRunning = g_dbg.startupM2SelftestRunning;
-    next.startupChecklistActive = g_dbg.startupChecklistActive;
-    next.startupM1Needs = g_dbg.startupM1Needs;
-    next.startupM2Needs = g_dbg.startupM2Needs;
-
-    next.safetyAckRequired = g_dbg.safetyAckRequired;
-    next.safetyNotausActive = g_dbg.safetyNotausActive;
-    next.safetyPowerOn = g_dbg.safetyPowerOn;
-    next.mega1ModeAuto = g_dbg.mega1ModeAuto;
-
-    next.actionCanAck = g_dbg.actionCanAck;
-    next.actionCanPowerOn = g_dbg.actionCanPowerOn;
-    next.actionCanPowerOff = g_dbg.actionCanPowerOff;
-    next.actionCanAuto = g_dbg.actionCanAuto;
-    next.actionCanManual = g_dbg.actionCanManual;
-    next.actionCanStartM1Selftest = g_dbg.actionCanStartM1Selftest;
-    next.actionCanStartM2Selftest = g_dbg.actionCanStartM2Selftest;
-    next.actionCanStartupConfirm = g_dbg.actionCanStartupConfirm;
-    next.summaryWarningPresent = g_dbg.summaryWarningPresent;
-    next.actionCanWrite = g_dbg.actionCanWrite;
-    next.mega1SelftestRetryAvailable = g_dbg.mega1SelftestRetryAvailable;
-    next.mega2SelftestRetryAvailable = g_dbg.mega2SelftestRetryAvailable;
-    next.mega1WeicheIstGeradeBits = g_dbg.mega1WeicheIstGeradeBits;
-    next.mega1WeicheSollGeradeBits = g_dbg.mega1WeicheSollGeradeBits;
-    next.mega2TurnoutIstMask = g_dbg.mega2TurnoutIstMask;
-    next.mega2TurnoutSollMask = g_dbg.mega2TurnoutSollMask;
-    next.mega2BlockOccMask = g_dbg.mega2BlockOccMask;
-    next.mega2SignalGrantMask = g_dbg.mega2SignalGrantMask;
-    next.mega2BlockOccValid = g_dbg.mega2BlockOccValid;
-    next.mega2SignalGrantValid = g_dbg.mega2SignalGrantValid;
-    next.uiStartupOverlayActive = g_dbg.uiStartupOverlayActive;
-    next.uiM1RetryOverlayActive = g_dbg.uiM1RetryOverlayActive;
-    next.uiM2RetryOverlayActive = g_dbg.uiM2RetryOverlayActive;
-    strncpy(next.uiOverlayMode, g_dbg.uiOverlayMode, sizeof(next.uiOverlayMode) - 1);
-    next.uiOverlayMode[sizeof(next.uiOverlayMode) - 1] = '\0';
-    strncpy(next.uiRetryScope, g_dbg.uiRetryScope, sizeof(next.uiRetryScope) - 1);
-    next.uiRetryScope[sizeof(next.uiRetryScope) - 1] = '\0';
-    next.mega1BahnhofMask = g_dbg.mega1BahnhofMask;
-    strncpy(next.mega1DefectList, g_dbg.mega1DefectList, sizeof(next.mega1DefectList) - 1);
-    next.mega1DefectList[sizeof(next.mega1DefectList) - 1] = '\0';
-    strncpy(next.mega2DefectList, g_dbg.mega2DefectList, sizeof(next.mega2DefectList) - 1);
-    next.mega2DefectList[sizeof(next.mega2DefectList) - 1] = '\0';
-
-    next.diagActive = g_dbg.diagActive;
-
-    strncpy(next.ethIp, g_dbg.ethIp, sizeof(next.ethIp) - 1);
-    next.ethIp[sizeof(next.ethIp) - 1] = '\0';
-    strncpy(next.diagOwner, g_dbg.diagOwner, sizeof(next.diagOwner) - 1);
-    next.diagOwner[sizeof(next.diagOwner) - 1] = '\0';
+    hmiSeedParsedStateFromCurrent(next);
 
     bool b = false;
     uint32_t u32 = 0;
@@ -3083,31 +3252,32 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         next.mega1Online = b;
     }
 
-    // Top-level / alternative shortcuts für Weichenbits
-    if (jsonFindUInt32(json, "\"mega1WeicheIstBits\"", &u32)) {
-        next.mega1WeicheIstGeradeBits = (uint16_t)(u32 & 0x0FFFu);
+    {
+        static const char* const kMega1IstTopKeys[] = {
+            "\"mega1WeicheIstBits\"",
+            "\"mega1WeicheIstGeradeBits\"",
+            "\"weicheIstBits\""
+        };
+        static const char* const kMega1SollTopKeys[] = {
+            "\"mega1WeicheSollBits\"",
+            "\"mega1WeicheSollGeradeBits\"",
+            "\"weicheSollBits\""
+        };
+
+        if (jsonFindUInt32Any(json, kMega1IstTopKeys, 3u, &u32)) {
+            hmiAssignMaskedUInt16(next.mega1WeicheIstGeradeBits, u32, 0x0FFFu);
+        }
+        if (jsonFindUInt32Any(json, kMega1SollTopKeys, 3u, &u32)) {
+            hmiAssignMaskedUInt16(next.mega1WeicheSollGeradeBits, u32, 0x0FFFu);
+        }
     }
-    if (jsonFindUInt32(json, "\"mega1WeicheSollBits\"", &u32)) {
-        next.mega1WeicheSollGeradeBits = (uint16_t)(u32 & 0x0FFFu);
-    }
-    if (jsonFindUInt32(json, "\"mega1WeicheIstGeradeBits\"", &u32)) {
-        next.mega1WeicheIstGeradeBits = (uint16_t)(u32 & 0x0FFFu);
-    }
-    if (jsonFindUInt32(json, "\"mega1WeicheSollGeradeBits\"", &u32)) {
-        next.mega1WeicheSollGeradeBits = (uint16_t)(u32 & 0x0FFFu);
-    }
-    if (jsonFindUInt32(json, "\"weicheIstBits\"", &u32)) {
-        next.mega1WeicheIstGeradeBits = (uint16_t)(u32 & 0x0FFFu);
-    }
-    if (jsonFindUInt32(json, "\"weicheSollBits\"", &u32)) {
-        next.mega1WeicheSollGeradeBits = (uint16_t)(u32 & 0x0FFFu);
-    }
+
     if (jsonFindUInt32(json, "\"blockOccMask\"", &u32)) {
-        next.mega2BlockOccMask = (uint16_t)(u32 & 0x01FFu);
+        hmiAssignMaskedUInt16(next.mega2BlockOccMask, u32, 0x01FFu);
         next.mega2BlockOccValid = true;
     }
     if (jsonFindUInt32(json, "\"signalGrantMask\"", &u32)) {
-        next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
+        hmiAssignMaskedUInt16(next.mega2SignalGrantMask, u32, 0x0FFFu);
         next.mega2SignalGrantValid = true;
     }
 
@@ -3128,26 +3298,27 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         if (jsonFindUInt8(mega1, "\"bahnhofMask\"", &u8)) {
             next.mega1BahnhofMask = u8;
         }
+        static const char* const kMega1IstSectionPrimary[] = { "\"weicheIstBits\"" };
+        static const char* const kMega1IstSectionFallback[] = { "\"weicheIstGeradeBits\"" };
+        static const char* const kMega1SollSectionPrimary[] = { "\"weicheSollBits\"" };
+        static const char* const kMega1SollSectionFallback[] = { "\"weicheSollGeradeBits\"" };
 
-        bool foundIstBits = false;
-        bool foundSollBits = false;
+        const bool foundIstBits = jsonFindUInt32Any(mega1, kMega1IstSectionPrimary, 1u, &u32);
+        if (foundIstBits) {
+            hmiAssignMaskedUInt16(next.mega1WeicheIstGeradeBits, u32, 0x0FFFu);
+        }
 
-        if (jsonFindUInt32(mega1, "\"weicheIstBits\"", &u32)) {
-            next.mega1WeicheIstGeradeBits = (uint16_t)(u32 & 0x0FFFu);
-            foundIstBits = true;
+        const bool foundSollBits = jsonFindUInt32Any(mega1, kMega1SollSectionPrimary, 1u, &u32);
+        if (foundSollBits) {
+            hmiAssignMaskedUInt16(next.mega1WeicheSollGeradeBits, u32, 0x0FFFu);
         }
-        if (jsonFindUInt32(mega1, "\"weicheSollBits\"", &u32)) {
-            next.mega1WeicheSollGeradeBits = (uint16_t)(u32 & 0x0FFFu);
-            foundSollBits = true;
-        }
+
         // Fallback für ältere/alternative Feldnamen
-        if (!foundIstBits && jsonFindUInt32(mega1, "\"weicheIstGeradeBits\"", &u32)) {
-            next.mega1WeicheIstGeradeBits = (uint16_t)(u32 & 0x0FFFu);
-            foundIstBits = true;
+        if (!foundIstBits && jsonFindUInt32Any(mega1, kMega1IstSectionFallback, 1u, &u32)) {
+            hmiAssignMaskedUInt16(next.mega1WeicheIstGeradeBits, u32, 0x0FFFu);
         }
-        if (!foundSollBits && jsonFindUInt32(mega1, "\"weicheSollGeradeBits\"", &u32)) {
-            next.mega1WeicheSollGeradeBits = (uint16_t)(u32 & 0x0FFFu);
-            foundSollBits = true;
+        if (!foundSollBits && jsonFindUInt32Any(mega1, kMega1SollSectionFallback, 1u, &u32)) {
+            hmiAssignMaskedUInt16(next.mega1WeicheSollGeradeBits, u32, 0x0FFFu);
         }
         if (jsonFindString(mega1, "\"defectList\"", next.mega1DefectList, sizeof(next.mega1DefectList))) {
         }
@@ -3162,37 +3333,30 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
             next.mega2SelftestRetryAvailable = b;
         }
         if (jsonFindUInt32(mega2, "\"turnoutIstMask\"", &u32)) {
-            next.mega2TurnoutIstMask = (uint16_t)(u32 & 0xFFFFu);;
+            hmiAssignMaskedUInt16(next.mega2TurnoutIstMask, u32, 0xFFFFu);
         }
         if (jsonFindUInt32(mega2, "\"turnoutSollMask\"", &u32)) {
-            next.mega2TurnoutSollMask = (uint16_t)(u32 & 0xFFFFu);
+            hmiAssignMaskedUInt16(next.mega2TurnoutSollMask, u32, 0xFFFFu);
         }
-        if (jsonFindUInt32(mega2, "\"blockOccMask\"", &u32)) {
-            next.mega2BlockOccMask = (uint16_t)(u32 & 0x01FFu);
+
+        static const char* const kMega2BlockOccKeys[] = {
+            "\"blockOccMask\"",
+            "\"blockOccupiedMask\"",
+            "\"belegungMask\""
+        };
+        static const char* const kMega2GrantKeys[] = {
+            "\"signalGrantMask\"",
+            "\"signalGrantedMask\"",
+            "\"routeGrantMask\"",
+            "\"routeGrantedMask\""
+        };
+
+        if (jsonFindUInt32Any(mega2, kMega2BlockOccKeys, 3u, &u32)) {
+            hmiAssignMaskedUInt16(next.mega2BlockOccMask, u32, 0x01FFu);
             next.mega2BlockOccValid = true;
         }
-        if (jsonFindUInt32(mega2, "\"blockOccupiedMask\"", &u32)) {
-            next.mega2BlockOccMask = (uint16_t)(u32 & 0x01FFu);
-            next.mega2BlockOccValid = true;
-        }
-        if (jsonFindUInt32(mega2, "\"belegungMask\"", &u32)) {
-            next.mega2BlockOccMask = (uint16_t)(u32 & 0x01FFu);
-            next.mega2BlockOccValid = true;
-        }
-        if (jsonFindUInt32(mega2, "\"signalGrantMask\"", &u32)) {
-            next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
-            next.mega2SignalGrantValid = true;
-        }
-        if (jsonFindUInt32(mega2, "\"signalGrantedMask\"", &u32)) {
-            next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
-            next.mega2SignalGrantValid = true;
-        }
-        if (jsonFindUInt32(mega2, "\"routeGrantMask\"", &u32)) {
-            next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
-            next.mega2SignalGrantValid = true;
-        }
-        if (jsonFindUInt32(mega2, "\"routeGrantedMask\"", &u32)) {
-            next.mega2SignalGrantMask = (uint16_t)(u32 & 0x0FFFu);
+        if (jsonFindUInt32Any(mega2, kMega2GrantKeys, 4u, &u32)) {
+            hmiAssignMaskedUInt16(next.mega2SignalGrantMask, u32, 0x0FFFu);
             next.mega2SignalGrantValid = true;
         }
         if (jsonFindString(mega2, "\"defectList\"", next.mega2DefectList, sizeof(next.mega2DefectList))) {
@@ -3325,58 +3489,7 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         }
     }
 
-    g_dbg.mega1Online = next.mega1Online;
-    g_dbg.mega2Online = next.mega2Online;
-    g_dbg.safetyLock = next.safetyLock;
-    g_dbg.ethConnected = next.ethConnected;
-    g_dbg.systemReady = next.systemReady;
-    g_dbg.wsClients = next.wsClients;
-
-    g_dbg.startupM1SelftestDone = next.startupM1SelftestDone;
-    g_dbg.startupM2SelftestDone = next.startupM2SelftestDone;
-    g_dbg.startupM1SelftestRunning = next.startupM1SelftestRunning;
-    g_dbg.startupM2SelftestRunning = next.startupM2SelftestRunning;
-    g_dbg.startupChecklistActive = next.startupChecklistActive;
-    g_dbg.startupM1Needs = next.startupM1Needs;
-    g_dbg.startupM2Needs = next.startupM2Needs;
-
-    g_dbg.safetyAckRequired = next.safetyAckRequired;
-    g_dbg.safetyNotausActive = next.safetyNotausActive;
-    g_dbg.safetyPowerOn = next.safetyPowerOn;
-    g_dbg.mega1ModeAuto = next.mega1ModeAuto;
-
-    g_dbg.actionCanAck = next.actionCanAck;
-    g_dbg.actionCanPowerOn = next.actionCanPowerOn;
-    g_dbg.actionCanPowerOff = next.actionCanPowerOff;
-    g_dbg.actionCanAuto = next.actionCanAuto;
-    g_dbg.actionCanManual = next.actionCanManual;
-    g_dbg.actionCanStartM1Selftest = next.actionCanStartM1Selftest;
-    g_dbg.actionCanStartM2Selftest = next.actionCanStartM2Selftest;
-    g_dbg.actionCanStartupConfirm = next.actionCanStartupConfirm;
-    g_dbg.summaryWarningPresent = next.summaryWarningPresent;
-    g_dbg.actionCanWrite = next.actionCanWrite;
-    g_dbg.mega1SelftestRetryAvailable = next.mega1SelftestRetryAvailable;
-    g_dbg.mega2SelftestRetryAvailable = next.mega2SelftestRetryAvailable;
-    g_dbg.mega1WeicheIstGeradeBits = next.mega1WeicheIstGeradeBits;
-    g_dbg.mega1WeicheSollGeradeBits = next.mega1WeicheSollGeradeBits;
-    g_dbg.mega2TurnoutIstMask = next.mega2TurnoutIstMask;
-    g_dbg.mega2TurnoutSollMask = next.mega2TurnoutSollMask;
-    g_dbg.mega2BlockOccMask = next.mega2BlockOccMask;
-    g_dbg.mega2SignalGrantMask = next.mega2SignalGrantMask;
-    g_dbg.mega2BlockOccValid = next.mega2BlockOccValid;
-    g_dbg.mega2SignalGrantValid = next.mega2SignalGrantValid;
-    g_dbg.uiStartupOverlayActive = next.uiStartupOverlayActive;
-    g_dbg.uiM1RetryOverlayActive = next.uiM1RetryOverlayActive;
-    g_dbg.uiM2RetryOverlayActive = next.uiM2RetryOverlayActive;
-    strncpy(g_dbg.uiOverlayMode, next.uiOverlayMode, sizeof(g_dbg.uiOverlayMode) - 1);
-    g_dbg.uiOverlayMode[sizeof(g_dbg.uiOverlayMode) - 1] = '\0';
-    strncpy(g_dbg.uiRetryScope, next.uiRetryScope, sizeof(g_dbg.uiRetryScope) - 1);
-    g_dbg.uiRetryScope[sizeof(g_dbg.uiRetryScope) - 1] = '\0';
-    g_dbg.mega1BahnhofMask = next.mega1BahnhofMask;
-    strncpy(g_dbg.mega1DefectList, next.mega1DefectList, sizeof(g_dbg.mega1DefectList) - 1);
-    g_dbg.mega1DefectList[sizeof(g_dbg.mega1DefectList) - 1] = '\0';
-    strncpy(g_dbg.mega2DefectList, next.mega2DefectList, sizeof(g_dbg.mega2DefectList) - 1);
-    g_dbg.mega2DefectList[sizeof(g_dbg.mega2DefectList) - 1] = '\0';
+    hmiApplyParsedState(next);
 
     const bool m1RunningNow = g_dbg.startupM1SelftestRunning;
     const bool m2RunningNow = g_dbg.startupM2SelftestRunning;
@@ -3443,12 +3556,6 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
 
     g_lastRetryM1Running = m1RunningNow;
     g_lastRetryM2Running = m2RunningNow;
-
-    g_dbg.diagActive = next.diagActive;
-    strncpy(g_dbg.ethIp, next.ethIp, sizeof(g_dbg.ethIp) - 1);
-    g_dbg.ethIp[sizeof(g_dbg.ethIp) - 1] = '\0';
-    strncpy(g_dbg.diagOwner, next.diagOwner, sizeof(g_dbg.diagOwner) - 1);
-    g_dbg.diagOwner[sizeof(g_dbg.diagOwner) - 1] = '\0';
 }
 
 static void hmiDebugExtractAnalogFromJson(const char* json) {
@@ -3482,179 +3589,6 @@ static void hmiDebugExtractAnalogFromJson(const char* json) {
     if (jsonFindUInt32(analog, "\"ageMs\"", &u32)) g_dbg.analogAgeMs = u32;
 
     g_analogDirty = g_analogDirty || changed;
-}
-
-static void hmiOnDebugToggle(lv_event_t* e) {
-    (void)e;
-    g_debugExpanded = !g_debugExpanded;
-
-    if (g_debugExpanded) {
-        if (g_debugLabelLeft) lv_obj_clear_flag(g_debugLabelLeft, LV_OBJ_FLAG_HIDDEN);
-        if (g_debugLabelRight) lv_obj_clear_flag(g_debugLabelRight, LV_OBJ_FLAG_HIDDEN);
-        if (g_debugToggleLabel) lv_label_set_text(g_debugToggleLabel, "DEBUG ON");
-    } else {
-        if (g_debugLabelLeft) lv_obj_add_flag(g_debugLabelLeft, LV_OBJ_FLAG_HIDDEN);
-        if (g_debugLabelRight) lv_obj_add_flag(g_debugLabelRight, LV_OBJ_FLAG_HIDDEN);
-        if (g_debugToggleLabel) lv_label_set_text(g_debugToggleLabel, "DEBUG OFF");
-    }
-}
-
-static void createDebugOverlay() {
-    g_debugToggleBtn = lv_btn_create(lv_scr_act());
-    lv_obj_set_size(g_debugToggleBtn, 120, 38);
-    lv_obj_align(g_debugToggleBtn, LV_ALIGN_TOP_LEFT, 8, 52);
-    lv_obj_add_event_cb(g_debugToggleBtn, hmiOnDebugToggle, LV_EVENT_CLICKED, nullptr);
-
-    g_debugToggleLabel = lv_label_create(g_debugToggleBtn);
-    lv_label_set_text(g_debugToggleLabel, "DEBUG OFF");
-    lv_obj_center(g_debugToggleLabel);
-
-    g_debugLabelLeft = lv_label_create(lv_scr_act());
-    g_debugLabelRight = lv_label_create(lv_scr_act());
-
-    lv_obj_t* labels[2] = { g_debugLabelLeft, g_debugLabelRight };
-    for (lv_obj_t* lbl : labels) {
-        lv_obj_set_style_bg_opa(lbl, LV_OPA_70, 0);
-        lv_obj_set_style_bg_color(lbl, lv_color_black(), 0);
-        lv_obj_set_style_text_color(lbl, lv_color_white(), 0);
-        lv_obj_set_style_text_font(lbl, &lv_font_montserrat_16, 0);
-        lv_obj_set_style_pad_left(lbl, 6, 0);
-        lv_obj_set_style_pad_right(lbl, 6, 0);
-        lv_obj_set_style_pad_top(lbl, 4, 0);
-        lv_obj_set_style_pad_bottom(lbl, 4, 0);
-        lv_obj_set_style_radius(lbl, 6, 0);
-        lv_label_set_long_mode(lbl, LV_LABEL_LONG_CLIP);
-        lv_obj_set_width(lbl, 192);
-    }
-
-    lv_obj_align(g_debugLabelLeft, LV_ALIGN_TOP_LEFT, 8, 104);
-    lv_obj_align(g_debugLabelRight, LV_ALIGN_TOP_LEFT, 232, 104);
-
-    lv_label_set_text(
-        g_debugLabelLeft,
-        "UART: boot\n"
-        "rxState: IDLE\n"
-        "expLen: 0\n"
-        "gotLen: 0\n"
-        "okLen: 0\n"
-        "errLen: 0\n"
-        "hdrTout: 0\n"
-        "payTout: 0\n"
-        "rxBytes: 0\n"
-        "rxFrames: 0\n"
-        "jsonOk: 0\n"
-        "jsonErr: 0\n"
-        "rxTout: 0\n"
-        "lastErr: -"
-    );
-
-    lv_label_set_text(
-        g_debugLabelRight,
-        "rxLen: 0\n"
-        "rxBad: 0\n"
-        "rxOverflow: 0\n"
-        "uptime_s: 0\n"
-        "txFrames: 0\n"
-        "txErr: 0\n"
-        "txDrop: 0\n"
-        "lastTx: -\n"
-        "uiMsLast: 0\n"
-        "uiMsMax: 0\n"
-        "vA10: 0\n"
-        "vB10: 0\n"
-        "CTRL: FREE\n"
-        "WRITE: LOCK\n"
-        "lastMsg: boot"
-    );
-
-    lv_obj_add_flag(g_debugLabelLeft, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(g_debugLabelRight, LV_OBJ_FLAG_HIDDEN);
-}
-
-static void updateDebugOverlay() {
-    if (!g_debugLabelLeft || !g_debugLabelRight) return;
-
-    const uint32_t uptimeS = millis() / 1000UL;
-    if (g_dbg.rxErrorHoldActive && (millis() - g_dbg.lastRxErrorMs >= HMI_RX_ERROR_HOLD_MS)) {
-        g_dbg.rxErrorHoldActive = false;
-    }
-    strncpy(g_dbg.lastRxErrorDisplay,
-            g_dbg.rxErrorHoldActive ? g_dbg.lastRxError : "-",
-            sizeof(g_dbg.lastRxErrorDisplay) - 1);
-    g_dbg.lastRxErrorDisplay[sizeof(g_dbg.lastRxErrorDisplay) - 1] = '\0';
-
-    char leftBuf[384];
-    snprintf(
-        leftBuf,
-        sizeof(leftBuf),
-        "UART: %s\n"
-        "rxState: %s\n"
-        "expLen: %u\n"
-        "gotLen: %u\n"
-        "okLen: %u\n"
-        "errLen: %u\n"
-        "hdrTout: %lu\n"
-        "payTout: %lu\n"
-        "rxBytes: %lu\n"
-        "rxFrames: %lu\n"
-        "jsonOk: %lu\n"
-        "jsonErr: %lu\n"
-        "rxTout: %lu\n"
-        "lastErr: %s",
-        g_dbg.uartConnected ? "connected" : "idle",
-        g_dbg.rxStateText,
-        (unsigned)g_dbg.rxExpectedLen,
-        (unsigned)g_dbg.rxGotLen,
-        (unsigned)g_dbg.lastOkLen,
-        (unsigned)g_dbg.lastErrLen,
-        (unsigned long)g_dbg.rxHdrTimeouts,
-        (unsigned long)g_dbg.rxPayloadTimeouts,
-        (unsigned long)g_dbg.rxBytes,
-        (unsigned long)g_dbg.rxFrames,
-        (unsigned long)g_dbg.jsonOk,
-        (unsigned long)g_dbg.jsonErr,
-        (unsigned long)g_dbg.rxTimeouts,
-        g_dbg.lastRxErrorDisplay
-    );
-
-    char rightBuf[384];
-    snprintf(
-        rightBuf,
-        sizeof(rightBuf),
-        "rxLen: %lu\n"
-        "rxBad: %lu\n"
-        "rxOverflow: %lu\n"
-        "uptime_s: %lu\n"
-        "txFrames: %lu\n"
-        "txErr: %lu\n"
-        "txDrop: %lu\n"
-        "lastTx: %s\n"
-        "uiMsLast: %lu\n"
-        "uiMsMax: %lu\n"
-        "vA10: %u\n"
-        "vB10: %u\n"
-        "CTRL: %s\n"
-        "WRITE: %s\n"
-        "lastMsg: %s",
-        (unsigned long)g_dbg.rxLenErr,
-        (unsigned long)g_dbg.rxBadFrames,
-        (unsigned long)g_dbg.rxOverflow,
-        (unsigned long)uptimeS,
-        (unsigned long)g_dbg.txFrames,
-        (unsigned long)g_dbg.txErr,
-        (unsigned long)g_dbg.txDropped,
-        g_dbg.lastTx,
-        (unsigned long)g_uiUpdateLastMs,
-        (unsigned long)g_uiUpdateMaxMs,
-        (unsigned)g_dbg.analogVA10,
-        (unsigned)g_dbg.analogVB10,
-        hmiUiCtrlText(),
-        hmiUiWriteText(),
-        g_dbg.lastMsgType
-    );
-
-    lv_label_set_text(g_debugLabelLeft, leftBuf);
-    lv_label_set_text(g_debugLabelRight, rightBuf);
 }
 
 static void updateDummyDebugState() {
@@ -3773,6 +3707,15 @@ static void frameParserCheckTimeout(uint32_t nowMs) {
 }
 
 static void frameParserProcessByte(uint8_t b) {
+    // UART-Parser:
+    // Wir parsen ein festes Rahmenformat:
+    //   SYNC1, SYNC2, LEN(lo), LEN(hi), PAYLOAD...
+    //
+    // Das Laengenfeld wird hier bewusst als low-byte-first interpretiert.
+    // Sollte sich das ETH-Framing jemals aendern, ist dies die zentrale Stelle.
+    //
+    // Fehler-/Timeout-Pfade setzen Debug-Status und resetten danach konsequent
+    // den Parserzustand, damit der naechste gueltige Frame wieder sauber ansetzen kann.
     g_lastFrameByteMs = millis();
     hmiRxRefreshStateDebug();
 
@@ -3800,6 +3743,11 @@ static void frameParserProcessByte(uint8_t b) {
             break;
 
         case RX_WAIT_LEN2:
+            // Annahme:
+            // Das ETH-Board sendet die Payload-Laenge als little-endian:
+            // zuerst low byte, dann high byte.
+            // Diese Annahme ist Teil des aktuellen, funktionierenden Framings.
+
             // Annahme: low byte zuerst, dann high byte.
             // Falls ETH high-first sendet, diese Zeile tauschen.
             g_rxExpectedLen |= ((uint16_t)b << 8);
