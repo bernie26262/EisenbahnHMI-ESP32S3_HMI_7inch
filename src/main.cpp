@@ -127,6 +127,8 @@ struct HmiUi {
     lv_obj_t* blocksTabLabel = nullptr;
     lv_obj_t* mega1WeicheSummaryLabel[3] = {nullptr, nullptr, nullptr};
     lv_obj_t* debugTabTitle = nullptr;
+    lv_obj_t* mega1WeicheBtnGrid = nullptr;
+    lv_obj_t* mega1WeicheBtn[12] = {};
     lv_obj_t* debugTabLabel = nullptr;
     lv_obj_t* bahnhofPanel = nullptr;
     lv_obj_t* bahnhofGrid = nullptr;
@@ -186,6 +188,7 @@ struct HmiUi {
     lv_obj_t* autoBtn = nullptr;
     lv_obj_t* powerBtnLabel = nullptr;
     lv_obj_t* powerOffBtnLabel = nullptr;
+    lv_obj_t* mega1WeicheBtnLabel[12] = {};
     lv_obj_t* autoBtnLabel = nullptr;
 
     lv_obj_t* startupOverlay = nullptr;
@@ -1887,6 +1890,29 @@ static void hmiCreateWeichenTabUi() {
     lv_label_set_text(g_ui.mega1WeicheSummaryLabel[0], "W0 -/-   W1 -/-   W2 -/-   W3 -/-");
     lv_label_set_text(g_ui.mega1WeicheSummaryLabel[1], "W4 -/-   W5 -/-   W6 -/-   W7 -/-");
     lv_label_set_text(g_ui.mega1WeicheSummaryLabel[2], "W8 -/-   W9 -/-   W10 -/-   W11 -/-");
+
+    g_ui.mega1WeicheBtnGrid = lv_obj_create(g_ui.weicheGrid);
+    lv_obj_set_width(g_ui.mega1WeicheBtnGrid, lv_pct(100));
+    lv_obj_set_height(g_ui.mega1WeicheBtnGrid, LV_SIZE_CONTENT);
+    lv_obj_set_style_bg_opa(g_ui.mega1WeicheBtnGrid, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(g_ui.mega1WeicheBtnGrid, 0, 0);
+    lv_obj_set_style_pad_all(g_ui.mega1WeicheBtnGrid, 0, 0);
+    lv_obj_set_layout(g_ui.mega1WeicheBtnGrid, LV_LAYOUT_FLEX);
+    lv_obj_set_flex_flow(g_ui.mega1WeicheBtnGrid, LV_FLEX_FLOW_ROW_WRAP);
+    lv_obj_set_flex_align(g_ui.mega1WeicheBtnGrid, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_START);
+    lv_obj_set_style_pad_column(g_ui.mega1WeicheBtnGrid, 8, 0);
+    lv_obj_set_style_pad_row(g_ui.mega1WeicheBtnGrid, 8, 0);
+    lv_obj_clear_flag(g_ui.mega1WeicheBtnGrid, LV_OBJ_FLAG_SCROLLABLE);
+
+    for (uint8_t i = 0; i < 12u; ++i) {
+        char btnText[8];
+        snprintf(btnText, sizeof(btnText), "W%u", (unsigned)i);
+        g_ui.mega1WeicheBtn[i] = hmiUiCreateActionButton(g_ui.mega1WeicheBtnGrid, &g_ui.mega1WeicheBtnLabel[i], btnText);
+        lv_obj_set_width(g_ui.mega1WeicheBtn[i], lv_pct(23));
+        lv_obj_set_height(g_ui.mega1WeicheBtn[i], 34);
+        hmiUiSetActionButtonColor(g_ui.mega1WeicheBtn[i], lv_palette_main(LV_PALETTE_BLUE));
+        lv_obj_add_event_cb(g_ui.mega1WeicheBtn[i], hmiUiOnWeicheClicked, LV_EVENT_CLICKED, (void*)(uintptr_t)i);
+    }
 
     lv_obj_t* sbhfPanel = hmiUiCreatePanel(g_ui.tabWeichen, "SBHF-Weichen", lv_pct(100));
     lv_obj_set_style_pad_all(sbhfPanel, 8, 0);
