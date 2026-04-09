@@ -75,6 +75,11 @@ struct HmiDebugState {
     bool actionCanStartM1Selftest = false;
     bool actionCanStartM2Selftest = false;
     bool actionCanStartupConfirm = false;
+    bool summaryEmergencyPresent = false;
+    uint8_t safetyBlockReason = 0;
+    uint8_t safetyErrorType = 0;
+    uint8_t safetyErrorIndex = 0;
+    char safetyText[96] = "";
     bool summaryWarningPresent = false;
     bool actionCanWrite = false;
     bool mega1SelftestRetryAvailable = false;
@@ -91,10 +96,15 @@ struct HmiDebugState {
     bool uiStartupOverlayActive = false;
     bool uiM1RetryOverlayActive = false;
     bool uiM2RetryOverlayActive = false;
+    char uiTitleKey[32] = "";
     char uiOverlayMode[16] = "none";
     char uiRetryScope[16] = "none";
     char mega1DefectList[64] = "";
     char mega2DefectList[32] = "";
+    bool mega1DiagSelftestRunning = false;
+    bool mega1DiagSelftestDone = false;
+    bool mega2SbhfSelftestDone = false;
+    uint8_t mega2ShadowSelftestFlags = 0;
     uint16_t analogVA10 = 0;
     uint16_t analogVB10 = 0;
     uint32_t analogTsMs = 0;
@@ -199,6 +209,7 @@ struct HmiUi {
     lv_obj_t* startupM1Btn = nullptr;
     lv_obj_t* startupM2Btn = nullptr;
     lv_obj_t* startupAckBtn = nullptr;
+    lv_obj_t* startupIpLabel = nullptr;
 
     lv_obj_t* retryOverlay = nullptr;
     lv_obj_t* retryPanel = nullptr;
@@ -206,6 +217,7 @@ struct HmiUi {
     lv_obj_t* retryText = nullptr;
     lv_obj_t* retryStatus = nullptr;
     lv_obj_t* retryCloseBtn = nullptr;
+    lv_obj_t* retryIpLabel = nullptr;
 };
 
 static HmiDebugState g_dbg;
@@ -383,8 +395,19 @@ static lv_obj_t* hmiCreateMainSplitUi();
 static void createMainUi();
 
 static bool hmiStartupAllDone();
+static bool hmiCanSendEmergencySbhfSelftestNow();
+static bool hmiEmergencyOverlayActive();
 static bool hmiRetryOverlayActive();
+static const char* hmiEmergencyTitleText();
+static void hmiBuildEmergencyStatusText(char* out, size_t outSize);
 static void hmiRetryOverlayUpdate();
+static bool hmiM1SelftestDefinitelyRunningFromState();
+static bool hmiM1SelftestDefinitelyDoneFromState();
+static bool hmiM2SelftestDefinitelyRunningFromState();
+static bool hmiM2SelftestDefinitelyDoneFromState();
+static void hmiEmergencyOverlayUpdate();
+static void hmiBuildOverlayIpText(char* out, size_t outSize);
+static void hmiOverlayUpdateIpLabel(lv_obj_t* label);
 static bool jsonFindString(const char* json, const char* key, char* out, size_t outSize);
 static bool jsonFindUInt32(const char* json, const char* key, uint32_t* outValue);
 static bool jsonFindUInt8(const char* json, const char* key, uint8_t* outValue);
@@ -474,8 +497,8 @@ static bool hmiCanSendM1TestNow() {
         hmiCanWriteNow() &&
         g_dbg.mega1Online &&
         g_dbg.startupM1Needs &&
-        (!g_dbg.startupM1SelftestDone) &&
-        (!g_dbg.startupM1SelftestRunning)
+        (!hmiM1SelftestDefinitelyDoneFromState()) &&
+        (!hmiM1SelftestDefinitelyRunningFromState())
     );
 }
 
@@ -485,8 +508,8 @@ static bool hmiCanSendM2TestNow() {
         hmiCanWriteNow() &&
         g_dbg.mega2Online &&
         g_dbg.startupM2Needs &&
-        (!g_dbg.startupM2SelftestDone) &&
-        (!g_dbg.startupM2SelftestRunning)
+        (!hmiM2SelftestDefinitelyDoneFromState()) &&
+        (!hmiM2SelftestDefinitelyRunningFromState())
     );
 }
 
@@ -697,6 +720,15 @@ static bool hmiStartupOverlayActive() {
         g_startupSessionActive = true;
     }
 
+    // Emergency hat fachlich Vorrang vor Startup.
+    // In diesem Fall wird das bestehende Startup-Overlay
+    // inhaltlich als Emergency-Overlay verwendet.
+    if (hmiEmergencyOverlayActive()) {
+        return false;
+    }
+
+    const bool startupDoneNow = hmiStartupAllDone();
+
     // "Sticky Session"-Logik:
     // Das Overlay darf in Uebergangsphasen nicht kurz verschwinden,
     // nur weil einzelne Statusbits fuer einen Zyklus umspringen.
@@ -718,8 +750,7 @@ static bool hmiStartupOverlayActive() {
 
     // Session erst wirklich verlassen, wenn alles sauber abgeschlossen ist.
     if (!g_dbg.startupChecklistActive &&
-        !g_dbg.startupM1Needs &&
-        !g_dbg.startupM2Needs &&
+        startupDoneNow &&
         !g_dbg.safetyAckRequired &&
         g_dbg.systemReady) {
         g_startupSessionActive = false;
@@ -728,8 +759,23 @@ static bool hmiStartupOverlayActive() {
     return g_startupSessionActive;
 }
 
+static bool hmiEmergencyOverlayActive() {
+    return g_dbg.safetyLock &&
+           g_dbg.safetyAckRequired &&
+           (
+               g_dbg.summaryEmergencyPresent ||
+               (g_dbg.safetyErrorType != 0u) ||
+               g_dbg.safetyNotausActive ||
+               (g_dbg.safetyBlockReason != 0u) ||
+               (strncmp(g_dbg.uiTitleKey, "EMERG_", 6) == 0)
+           );
+}
+
 static bool hmiRetryOverlayActive() {
     if (g_retryOverlayDismissed) {
+        return false;
+    }
+    if (hmiEmergencyOverlayActive()) {
         return false;
     }
     if (g_dbg.uiStartupOverlayActive) {
@@ -738,10 +784,122 @@ static bool hmiRetryOverlayActive() {
     return g_dbg.uiM1RetryOverlayActive || g_dbg.uiM2RetryOverlayActive;
 }
 
-static bool hmiStartupAllDone() {
-    return ((!g_dbg.startupM1Needs) || g_dbg.startupM1SelftestDone) &&
-           ((!g_dbg.startupM2Needs) || g_dbg.startupM2SelftestDone);
+static const char* hmiEmergencyTitleText() {
+    switch (g_dbg.safetyErrorType) {
+        case 1:  return "NOT-AUS aktiv";
+        case 2:  return "Kurzschluss / Ueberstrom";
+        case 3:  return "SBHF Weichenfehler";
+        case 4:  return "SSR Fehler";
+        case 5:  return "Doppelte Blockbelegung";
+        default:
+            if (g_dbg.safetyNotausActive) {
+                return "NOT-AUS aktiv";
+            }
+            return "Stoerung / Safety-Lock";
+    }
 }
+
+static void hmiBuildEmergencyStatusText(char* out, size_t outSize) {
+    if (!out || outSize == 0) {
+        return;
+    }
+
+    if (g_dbg.safetyText[0] != '\0' && strcmp(g_dbg.safetyText, "-") != 0) {
+        snprintf(
+            out,
+            outSize,
+            "%s\n"
+            "errorType=%u  errorIndex=%u",
+            g_dbg.safetyText,
+            (unsigned)g_dbg.safetyErrorType,
+            (unsigned)g_dbg.safetyErrorIndex
+        );
+        return;
+    }
+
+    switch (g_dbg.safetyErrorType) {
+        case 1:
+            snprintf(out, outSize, "Nothalte-Gleis / NOT-AUS wurde ausgeloest.");
+            break;
+        case 2:
+            snprintf(out, outSize, "Kurzschluss oder Ueberstrom im Block erkannt.");
+            break;
+        case 3:
+            if (g_dbg.safetyErrorIndex <= 1u) {
+                snprintf(
+                    out,
+                    outSize,
+                    "Weichenfehler im Schattenbahnhof.\n"
+                    "Betroffene Weiche: W%u",
+                    (unsigned)(12u + g_dbg.safetyErrorIndex)
+                );
+            } else {
+                snprintf(
+                    out,
+                    outSize,
+                    "Weichenfehler im Schattenbahnhof.\n"
+                    "errorIndex=%u",
+                    (unsigned)g_dbg.safetyErrorIndex
+                );
+            }
+            break;
+        case 4:
+            snprintf(out, outSize, "SSR-Fehler erkannt.");
+            break;
+        case 5:
+            snprintf(out, outSize, "Doppelte Blockbelegung erkannt.");
+            break;
+        default:
+            snprintf(
+                out,
+                outSize,
+                "Safety-Lock aktiv.\n"
+                "blockReason=%u  errorType=%u  errorIndex=%u",
+                (unsigned)g_dbg.safetyBlockReason,
+                (unsigned)g_dbg.safetyErrorType,
+                (unsigned)g_dbg.safetyErrorIndex
+            );
+            break;
+    }
+}
+
+static bool hmiStartupAllDone() {
+    return ((!g_dbg.startupM1Needs) || hmiM1SelftestDefinitelyDoneFromState()) &&
+           ((!g_dbg.startupM2Needs) || hmiM2SelftestDefinitelyDoneFromState());
+}
+
+static bool hmiCanSendEmergencySbhfSelftestNow() {
+    return hmiCanWriteNow() &&
+           g_dbg.mega2Online &&
+           hmiEmergencyOverlayActive() &&
+           (g_dbg.safetyErrorType == 3u) &&
+           (!hmiM2SelftestDefinitelyRunningFromState()) &&
+           (!g_pendingStartupM2);
+}
+
+static bool hmiM2SelftestDefinitelyRunningFromState() {
+    return g_dbg.startupM2SelftestRunning ||
+           ((g_dbg.mega2ShadowSelftestFlags & 0x01u) != 0u);
+}
+
+static bool hmiM1SelftestDefinitelyRunningFromState() {
+    return g_dbg.startupM1SelftestRunning ||
+           g_dbg.mega1DiagSelftestRunning;
+}
+
+static bool hmiM1SelftestDefinitelyDoneFromState() {
+    return g_dbg.startupM1SelftestDone ||
+           g_dbg.mega1DiagSelftestDone ||
+           (g_dbg.mega1Online && !g_dbg.startupM1Needs);
+}
+
+static bool hmiM2SelftestDefinitelyDoneFromState() {
+    return g_dbg.startupM2SelftestDone ||
+           g_dbg.mega2SbhfSelftestDone ||
+           ((g_dbg.mega2ShadowSelftestFlags & 0x02u) != 0u) ||
+           (g_dbg.mega2Online && !g_dbg.startupM2Needs);
+}
+
 
 static bool jsonFindUInt32Any(
     const char* json,
@@ -785,6 +943,25 @@ static bool hmiJsonIsAnalog(const char* json) {
 
 static bool hmiJsonIsStateLike(const char* json) {
     return hmiJsonTypeIs(json, "state") || hmiJsonTypeIs(json, "state-lite");
+}
+
+static void hmiBuildOverlayIpText(char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+
+    if (g_dbg.ethConnected &&
+        g_dbg.ethIp[0] != '\0' &&
+        strcmp(g_dbg.ethIp, "-") != 0) {
+        snprintf(out, outSize, "ETH: %s", g_dbg.ethIp);
+    } else {
+        snprintf(out, outSize, "ETH: offline");
+    }
+}
+
+static void hmiOverlayUpdateIpLabel(lv_obj_t* label) {
+    if (!label) return;
+    char buf[32];
+    hmiBuildOverlayIpText(buf, sizeof(buf));
+    lv_label_set_text(label, buf);
 }
 
 static void hmiDebugSetMsgTypeFromJson(const char* json) {
@@ -966,7 +1143,7 @@ static void hmiUiOnM1TestClicked(lv_event_t* e) {
 
 static void hmiUiOnM2TestClicked(lv_event_t* e) {
     (void)e;
-    if (!hmiCanSendM2TestNow()) {
+    if (!(hmiCanSendM2TestNow() || hmiCanSendEmergencySbhfSelftestNow())) {
         g_dbg.txDropped++;
         hmiTxSetLast("drop-m2test");
         hmiUiAfterTxAttempt();
@@ -984,6 +1161,21 @@ static void hmiUiOnM2TestClicked(lv_event_t* e) {
 
 static void hmiUiOnStartupAckClicked(lv_event_t* e) {
     (void)e;
+
+    // Dasselbe Overlay wird im Emergency-Fall als ACK-Overlay verwendet.
+    if (hmiEmergencyOverlayActive()) {
+        if (!hmiCanSendAckNow()) {
+            g_dbg.txDropped++;
+            hmiTxSetLast("drop-emergAck");
+            hmiUiAfterTxAttempt();
+            return;
+        }
+
+        hmiSendActionCommand("safetyAck");
+        hmiUiAfterTxAttempt();
+        return;
+    }
+
     if (!hmiCanSendStartupConfirmNow()) {
         g_dbg.txDropped++;
         hmiTxSetLast("drop-startupAck");
@@ -1671,6 +1863,14 @@ static void hmiCreateStartupOverlayUi(lv_obj_t* screen) {
     lv_obj_add_event_cb(g_ui.startupAckBtn, hmiUiOnStartupAckClicked, LV_EVENT_CLICKED, nullptr);
     lv_obj_add_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
 
+    g_ui.startupIpLabel = lv_label_create(g_ui.startupOverlay);
+    lv_label_set_text(g_ui.startupIpLabel, "ETH: -");
+    lv_obj_set_style_text_font(g_ui.startupIpLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.startupIpLabel, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.startupIpLabel, LV_OPA_90, 0);
+    lv_obj_align(g_ui.startupIpLabel, LV_ALIGN_BOTTOM_RIGHT, -18, -12);
+    hmiOverlayUpdateIpLabel(g_ui.startupIpLabel);
+
     lv_obj_add_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -1710,6 +1910,15 @@ static void hmiCreateRetryOverlayUi(lv_obj_t* screen) {
     g_ui.retryCloseBtn = hmiUiCreateOverlayButton(g_ui.retryPanel, "AUSBLENDEN");
     lv_obj_set_width(g_ui.retryCloseBtn, lv_pct(100));
     lv_obj_add_event_cb(g_ui.retryCloseBtn, hmiUiOnRetryCloseClicked, LV_EVENT_CLICKED, nullptr);
+
+    g_ui.retryIpLabel = lv_label_create(g_ui.retryOverlay);
+    lv_label_set_text(g_ui.retryIpLabel, "ETH: -");
+    lv_obj_set_style_text_font(g_ui.retryIpLabel, &lv_font_montserrat_16, 0);
+    lv_obj_set_style_text_color(g_ui.retryIpLabel, lv_color_white(), 0);
+    lv_obj_set_style_text_opa(g_ui.retryIpLabel, LV_OPA_90, 0);
+    lv_obj_align(g_ui.retryIpLabel, LV_ALIGN_BOTTOM_RIGHT, -18, -12);
+    hmiOverlayUpdateIpLabel(g_ui.retryIpLabel);
+
     lv_obj_add_flag(g_ui.retryOverlay, LV_OBJ_FLAG_HIDDEN);
 }
 
@@ -2072,6 +2281,11 @@ static void hmiStartupOverlayUpdate() {
         return;
     }
 
+    // Emergency benutzt dieselben Widgets; dann hier nicht eingreifen.
+    if (hmiEmergencyOverlayActive()) {
+        return;
+    }
+
     const uint32_t now = millis();
     static constexpr uint32_t OVERLAY_DISABLE_DEBOUNCE_MS = 450;
 
@@ -2087,13 +2301,13 @@ static void hmiStartupOverlayUpdate() {
     // Pending-Latches zurücknehmen, sobald der authoritative State sichtbar zeigt,
     // dass die Aktion angekommen ist bzw. der Zustand weitergelaufen ist.
     if (g_pendingStartupM1) {
-        if (g_dbg.startupM1SelftestDone) {
+        if (hmiM1SelftestDefinitelyDoneFromState()) {
             g_pendingStartupM1 = false;
         }
     }
 
     if (g_pendingStartupM2) {
-        if (g_dbg.startupM2SelftestDone) {
+        if (hmiM2SelftestDefinitelyDoneFromState()) {
             g_pendingStartupM2 = false;
         }
     }
@@ -2115,6 +2329,8 @@ static void hmiStartupOverlayUpdate() {
         lv_obj_add_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
         return;
     }
+
+    hmiOverlayUpdateIpLabel(g_ui.startupIpLabel);
 
     // "Priming":
     // Beim ersten Sichtbarwerden des Overlays wird es nur eingeblendet.
@@ -2157,13 +2373,13 @@ static void hmiStartupOverlayUpdate() {
     // Debounce sichtbar werden.
     const bool hardDisableM1 =
         g_pendingStartupM1 ||
-        g_dbg.startupM1SelftestRunning ||
-        g_dbg.startupM1SelftestDone;
+        hmiM1SelftestDefinitelyRunningFromState() ||
+        hmiM1SelftestDefinitelyDoneFromState();
 
     const bool hardDisableM2 =
         g_pendingStartupM2 ||
-        g_dbg.startupM2SelftestRunning ||
-        g_dbg.startupM2SelftestDone;
+        hmiM2SelftestDefinitelyRunningFromState() ||
+        hmiM2SelftestDefinitelyDoneFromState();
 
     if (rawCanM1) {
         g_overlayM1VisibleEnabled = true;
@@ -2184,9 +2400,9 @@ static void hmiStartupOverlayUpdate() {
     }
 
     const bool showM1Running =
-        g_dbg.startupM1SelftestRunning || g_pendingStartupM1;
+        hmiM1SelftestDefinitelyRunningFromState() || (g_pendingStartupM1 && !hmiM1SelftestDefinitelyDoneFromState());
     const bool showM2Running =
-        g_dbg.startupM2SelftestRunning || g_pendingStartupM2;
+        hmiM2SelftestDefinitelyRunningFromState() || (g_pendingStartupM2 && !hmiM2SelftestDefinitelyDoneFromState());
 
     char buf[384];
     snprintf(
@@ -2195,11 +2411,15 @@ static void hmiStartupOverlayUpdate() {
         "SBHF-Weichen Selftest (Mega2): %s\n"
         "Weichen Selftest (Mega1): %s",
         hmiStartupStateText(
-            g_dbg.startupM2Needs || g_pendingStartupM2,
-            g_dbg.startupM2SelftestDone,
+            g_dbg.startupM2Needs || (g_pendingStartupM2 && !hmiM2SelftestDefinitelyDoneFromState()),
+            hmiM2SelftestDefinitelyDoneFromState(),
             showM2Running
         ),
-        hmiStartupStateText(g_dbg.startupM1Needs, g_dbg.startupM1SelftestDone, showM1Running)
+        hmiStartupStateText(
+            g_dbg.startupM1Needs || (g_pendingStartupM1 && !hmiM1SelftestDefinitelyDoneFromState()),
+            hmiM1SelftestDefinitelyDoneFromState(),
+            showM1Running
+        )
     );
 
     if (g_ui.startupText) {
@@ -2243,6 +2463,60 @@ static void hmiStartupOverlayUpdate() {
     lv_obj_clear_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
 }
 
+static void hmiEmergencyOverlayUpdate() {
+    if (!g_ui.startupOverlay || !g_ui.startupTitle || !g_ui.startupText || !g_ui.startupStatus || !g_ui.startupAckBtn) {
+        return;
+    }
+
+    if (!hmiEmergencyOverlayActive()) {
+        return;
+    }
+
+    hmiOverlayUpdateIpLabel(g_ui.startupIpLabel);
+
+    char statusBuf[256];
+    hmiBuildEmergencyStatusText(statusBuf, sizeof(statusBuf));
+
+    lv_label_set_text(g_ui.startupTitle, hmiEmergencyTitleText());
+
+    if (g_ui.startupText) {
+        lv_label_set_text(
+            g_ui.startupText,
+            "Bitte Stoerung pruefen und danach quittieren.\n"
+            "Power bleibt gesperrt, bis der Fehler quittiert wurde."
+        );
+    }
+
+    lv_label_set_text(g_ui.startupStatus, statusBuf);
+
+    // Im Emergency-Fall nur ACK-Button zeigen.
+    lv_obj_add_flag(g_ui.startupM1Btn, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_clear_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
+
+    const bool showSbhfSelftest = (g_dbg.safetyErrorType == 3u);
+    if (showSbhfSelftest) {
+        lv_obj_clear_flag(g_ui.startupM2Btn, LV_OBJ_FLAG_HIDDEN);
+    } else {
+        lv_obj_add_flag(g_ui.startupM2Btn, LV_OBJ_FLAG_HIDDEN);
+    }
+
+    hmiUiSetButtonEnabled(
+        g_ui.startupM2Btn,
+        nullptr,
+        showSbhfSelftest && hmiCanSendEmergencySbhfSelftestNow(),
+        "SBHF TEST"
+    );
+
+    hmiUiSetButtonEnabled(
+        g_ui.startupAckBtn,
+        nullptr,
+        hmiCanSendAckNow(),
+        "QUITTIEREN"
+    );
+
+    lv_obj_clear_flag(g_ui.startupOverlay, LV_OBJ_FLAG_HIDDEN);
+}
+
 static void hmiRetryOverlayUpdate() {
     if (!g_ui.retryOverlay || !g_ui.retryTitle || !g_ui.retryText || !g_ui.retryStatus) {
         return;
@@ -2253,6 +2527,8 @@ static void hmiRetryOverlayUpdate() {
         lv_obj_add_flag(g_ui.retryOverlay, LV_OBJ_FLAG_HIDDEN);
         return;
     }
+
+    hmiOverlayUpdateIpLabel(g_ui.retryIpLabel);
 
     lv_obj_clear_flag(g_ui.retryOverlay, LV_OBJ_FLAG_HIDDEN);
 
@@ -2517,7 +2793,8 @@ static void hmiUiUpdate() {
     // Wenn ein Overlay aktiv ist, nur die Overlays selbst aktualisieren und
     // den restlichen UI-Refresh fuer diesen Zyklus komplett auslassen.
     // So laufen nicht Mega1-/Rechtsseiten-Updates parallel zum Overlay.
-    if (hmiStartupOverlayActive() || hmiRetryOverlayActive()) {
+    if (hmiEmergencyOverlayActive() || hmiStartupOverlayActive() || hmiRetryOverlayActive()) {
+        hmiEmergencyOverlayUpdate();
         hmiStartupOverlayUpdate();
         hmiRetryOverlayUpdate();
         g_overlayCacheInit = false;
@@ -2898,9 +3175,9 @@ static void hmiUiUpdate() {
 
         const bool valid = g_dbg.mega2Online;
         const bool istA = ((g_dbg.mega2TurnoutIstMask & (1u << idxA)) == 0u);
-        const bool sollA = ((g_dbg.mega2TurnoutSollMask & (1u << idxA)) != 0u);
+        const bool sollA = ((g_dbg.mega2TurnoutSollMask & (1u << idxA)) == 0u);
         const bool istB = ((g_dbg.mega2TurnoutIstMask & (1u << idxB)) == 0u);
-        const bool sollB = ((g_dbg.mega2TurnoutSollMask & (1u << idxB)) != 0u);
+        const bool sollB = ((g_dbg.mega2TurnoutSollMask & (1u << idxB)) == 0u);
         const bool mismatchA = valid && (istA != sollA);
         const bool mismatchB = valid && (istB != sollB);
 
@@ -2985,11 +3262,15 @@ static void hmiUiUpdate() {
     startupOverlayHash ^= g_dbg.safetyAckRequired ? (1u << 7) : 0u;
     startupOverlayHash ^= g_dbg.safetyLock ? (1u << 8) : 0u;
     startupOverlayHash ^= g_dbg.safetyNotausActive ? (1u << 9) : 0u;
-    startupOverlayHash ^= g_dbg.systemReady ? (1u << 10) : 0u;
-    startupOverlayHash ^= g_dbg.mega1Online ? (1u << 11) : 0u;
-    startupOverlayHash ^= g_dbg.mega2Online ? (1u << 12) : 0u;
-    startupOverlayHash ^= g_dbg.ethConnected ? (1u << 13) : 0u;
-    startupOverlayHash ^= g_dbg.actionCanWrite ? (1u << 14) : 0u;
+    startupOverlayHash ^= g_dbg.summaryEmergencyPresent ? (1u << 10) : 0u;
+    startupOverlayHash ^= ((uint32_t)g_dbg.safetyErrorType << 11);
+    startupOverlayHash ^= ((uint32_t)g_dbg.safetyErrorIndex << 16);
+    startupOverlayHash ^= ((uint32_t)(uint8_t)g_dbg.uiTitleKey[0] << 24);
+    startupOverlayHash ^= g_dbg.systemReady ? (1u << 25) : 0u;
+    startupOverlayHash ^= g_dbg.mega1Online ? (1u << 26) : 0u;
+    startupOverlayHash ^= g_dbg.mega2Online ? (1u << 27) : 0u;
+    startupOverlayHash ^= g_dbg.ethConnected ? (1u << 28) : 0u;
+    startupOverlayHash ^= g_dbg.actionCanWrite ? (1u << 29) : 0u;
     startupOverlayHash ^= g_dbg.actionCanStartM1Selftest ? (1u << 15) : 0u;
     startupOverlayHash ^= g_dbg.actionCanStartM2Selftest ? (1u << 16) : 0u;
     startupOverlayHash ^= g_dbg.actionCanStartupConfirm ? (1u << 17) : 0u;
@@ -3023,6 +3304,15 @@ static void hmiUiUpdate() {
         //
         // Dieses return ist absichtlich und Teil des Stabilitaets-Fixes.
         // --- NEU: Overlay hat Priorität, restlichen UI-Zyklus abbrechen ---
+        if (hmiEmergencyOverlayActive()) {
+            hmiEmergencyOverlayUpdate();
+
+            g_lastStartupOverlayHash = startupOverlayHash;
+            g_lastStartupOverlayUpdateMs = nowMs;
+
+            return; // <<< KRITISCH: keine weiteren UI-Updates in diesem Zyklus
+        }
+
         if (hmiStartupOverlayActive()) {
             hmiStartupOverlayUpdate();
 
@@ -3032,6 +3322,7 @@ static void hmiUiUpdate() {
             return; // <<< KRITISCH: keine weiteren UI-Updates in diesem Zyklus
         }
 
+        hmiEmergencyOverlayUpdate();
         hmiStartupOverlayUpdate();
         g_lastStartupOverlayHash = startupOverlayHash;
         g_lastStartupOverlayUpdateMs = nowMs;
@@ -3092,6 +3383,11 @@ struct ParsedState {
         bool actionCanStartM1Selftest = false;
         bool actionCanStartM2Selftest = false;
         bool actionCanStartupConfirm = false;
+        bool summaryEmergencyPresent = false;
+        uint8_t safetyBlockReason = 0;
+        uint8_t safetyErrorType = 0;
+        uint8_t safetyErrorIndex = 0;
+        char safetyText[96] = "";
         bool summaryWarningPresent = false;
         bool actionCanWrite = false;
         bool mega1SelftestRetryAvailable = false;
@@ -3112,10 +3408,15 @@ struct ParsedState {
         bool uiStartupOverlayActive = false;
         bool uiM1RetryOverlayActive = false;
         bool uiM2RetryOverlayActive = false;
+        char uiTitleKey[32] = "";
         char uiOverlayMode[16] = "none";
         char uiRetryScope[16] = "none";
         char mega1DefectList[64] = "";
         char mega2DefectList[32] = "";
+        bool mega1DiagSelftestRunning = false;
+        bool mega1DiagSelftestDone = false;
+        bool mega2SbhfSelftestDone = false;
+        uint8_t mega2ShadowSelftestFlags = 0;
 
         // Diag-/ETH-Kontext
         bool diagActive = false;
@@ -3155,6 +3456,11 @@ static void hmiSeedParsedStateFromCurrent(ParsedState& dst) {
     dst.actionCanStartM1Selftest = g_dbg.actionCanStartM1Selftest;
     dst.actionCanStartM2Selftest = g_dbg.actionCanStartM2Selftest;
     dst.actionCanStartupConfirm = g_dbg.actionCanStartupConfirm;
+    dst.summaryEmergencyPresent = g_dbg.summaryEmergencyPresent;
+    dst.safetyBlockReason = g_dbg.safetyBlockReason;
+    dst.safetyErrorType = g_dbg.safetyErrorType;
+    dst.safetyErrorIndex = g_dbg.safetyErrorIndex;
+    copyStr(dst.safetyText, sizeof(dst.safetyText), g_dbg.safetyText);
     dst.summaryWarningPresent = g_dbg.summaryWarningPresent;
     dst.actionCanWrite = g_dbg.actionCanWrite;
     dst.mega1SelftestRetryAvailable = g_dbg.mega1SelftestRetryAvailable;
@@ -3173,11 +3479,16 @@ static void hmiSeedParsedStateFromCurrent(ParsedState& dst) {
     dst.uiStartupOverlayActive = g_dbg.uiStartupOverlayActive;
     dst.uiM1RetryOverlayActive = g_dbg.uiM1RetryOverlayActive;
     dst.uiM2RetryOverlayActive = g_dbg.uiM2RetryOverlayActive;
+    copyStr(dst.uiTitleKey, sizeof(dst.uiTitleKey), g_dbg.uiTitleKey);
     copyStr(dst.uiOverlayMode, sizeof(dst.uiOverlayMode), g_dbg.uiOverlayMode);
     copyStr(dst.uiRetryScope, sizeof(dst.uiRetryScope), g_dbg.uiRetryScope);
 
     copyStr(dst.mega1DefectList, sizeof(dst.mega1DefectList), g_dbg.mega1DefectList);
     copyStr(dst.mega2DefectList, sizeof(dst.mega2DefectList), g_dbg.mega2DefectList);
+    dst.mega1DiagSelftestRunning = g_dbg.mega1DiagSelftestRunning;
+    dst.mega1DiagSelftestDone = g_dbg.mega1DiagSelftestDone;
+    dst.mega2SbhfSelftestDone = g_dbg.mega2SbhfSelftestDone;
+    dst.mega2ShadowSelftestFlags = g_dbg.mega2ShadowSelftestFlags;
 
     dst.diagActive = g_dbg.diagActive;
     copyStr(dst.ethIp, sizeof(dst.ethIp), g_dbg.ethIp);
@@ -3216,6 +3527,11 @@ static void hmiApplyParsedState(const ParsedState& next) {
     g_dbg.actionCanStartM1Selftest = next.actionCanStartM1Selftest;
     g_dbg.actionCanStartM2Selftest = next.actionCanStartM2Selftest;
     g_dbg.actionCanStartupConfirm = next.actionCanStartupConfirm;
+    g_dbg.summaryEmergencyPresent = next.summaryEmergencyPresent;
+    g_dbg.safetyBlockReason = next.safetyBlockReason;
+    g_dbg.safetyErrorType = next.safetyErrorType;
+    g_dbg.safetyErrorIndex = next.safetyErrorIndex;
+    copyStr(g_dbg.safetyText, sizeof(g_dbg.safetyText), next.safetyText);
     g_dbg.summaryWarningPresent = next.summaryWarningPresent;
     g_dbg.actionCanWrite = next.actionCanWrite;
     g_dbg.mega1SelftestRetryAvailable = next.mega1SelftestRetryAvailable;
@@ -3233,12 +3549,17 @@ static void hmiApplyParsedState(const ParsedState& next) {
     g_dbg.uiStartupOverlayActive = next.uiStartupOverlayActive;
     g_dbg.uiM1RetryOverlayActive = next.uiM1RetryOverlayActive;
     g_dbg.uiM2RetryOverlayActive = next.uiM2RetryOverlayActive;
+    copyStr(g_dbg.uiTitleKey, sizeof(g_dbg.uiTitleKey), next.uiTitleKey);
     copyStr(g_dbg.uiOverlayMode, sizeof(g_dbg.uiOverlayMode), next.uiOverlayMode);
     copyStr(g_dbg.uiRetryScope, sizeof(g_dbg.uiRetryScope), next.uiRetryScope);
 
     g_dbg.mega1BahnhofMask = next.mega1BahnhofMask;
     copyStr(g_dbg.mega1DefectList, sizeof(g_dbg.mega1DefectList), next.mega1DefectList);
     copyStr(g_dbg.mega2DefectList, sizeof(g_dbg.mega2DefectList), next.mega2DefectList);
+    g_dbg.mega1DiagSelftestRunning = next.mega1DiagSelftestRunning;
+    g_dbg.mega1DiagSelftestDone = next.mega1DiagSelftestDone;
+    g_dbg.mega2SbhfSelftestDone = next.mega2SbhfSelftestDone;
+    g_dbg.mega2ShadowSelftestFlags = next.mega2ShadowSelftestFlags;
 
     g_dbg.diagActive = next.diagActive;
     copyStr(g_dbg.ethIp, sizeof(g_dbg.ethIp), next.ethIp);
@@ -3270,6 +3591,7 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
 
     bool b = false;
     uint32_t u32 = 0;
+    uint8_t u8 = 0;
 
     // Top-level / legacy shortcuts
     if (jsonFindString(json, "\"ip\"", next.ethIp, sizeof(next.ethIp))) {
@@ -3320,7 +3642,6 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         if (jsonFindBool(mega1, "\"selftestRetryAvailable\"", &b)) {
             next.mega1SelftestRetryAvailable = b;
         }
-        uint8_t u8 = 0;
         if (jsonFindUInt8(mega1, "\"bahnhofMask\"", &u8)) {
             next.mega1BahnhofMask = u8;
         }
@@ -3348,6 +3669,12 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         }
         if (jsonFindString(mega1, "\"defectList\"", next.mega1DefectList, sizeof(next.mega1DefectList))) {
         }
+
+        const char* diag = strstr(mega1, "\"diag\"");
+        if (diag && jsonFindBool(diag, "\"selftestRunning\"", &b)) {
+            next.mega1DiagSelftestRunning = b;
+        }
+        if (diag && jsonFindBool(diag, "\"selftestDone\"", &b)) next.mega1DiagSelftestDone = b;
     }
 
     const char* mega2 = strstr(json, "\"mega2\"");
@@ -3387,6 +3714,13 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         }
         if (jsonFindString(mega2, "\"defectList\"", next.mega2DefectList, sizeof(next.mega2DefectList))) {
         }
+
+        const char* sbhf = strstr(mega2, "\"sbhf\"");
+        if (sbhf && jsonFindBool(sbhf, "\"selftestDone\"", &b)) {
+            next.mega2SbhfSelftestDone = b;
+        }
+        const char* shadow = strstr(mega2, "\"shadow\"");
+        if (shadow && jsonFindUInt8(shadow, "\"selftestFlags\"", &u8)) next.mega2ShadowSelftestFlags = u8;
     }
 
     const char* safety = strstr(json, "\"safety\"");
@@ -3403,12 +3737,26 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         if (jsonFindBool(safety, "\"powerOn\"", &b)) {
             next.safetyPowerOn = b;
         }
+        if (jsonFindUInt8(safety, "\"blockReason\"", &u8)) {
+            next.safetyBlockReason = u8;
+        }
+        if (jsonFindUInt8(safety, "\"errorType\"", &u8)) {
+            next.safetyErrorType = u8;
+        }
+        if (jsonFindUInt8(safety, "\"errorIndex\"", &u8)) {
+            next.safetyErrorIndex = u8;
+        }
+        if (jsonFindString(safety, "\"text\"", next.safetyText, sizeof(next.safetyText))) {
+        }
     }
 
     const char* summary = strstr(json, "\"summary\"");
     if (summary) {
         if (jsonFindBool(summary, "\"warningPresent\"", &b)) {
             next.summaryWarningPresent = b;
+        }
+        if (jsonFindBool(summary, "\"emergencyPresent\"", &b)) {
+            next.summaryEmergencyPresent = b;
         }
     }
 
@@ -3492,6 +3840,8 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
             next.uiM2RetryOverlayActive = b;
         }
         if (jsonFindString(ui, "\"overlayMode\"", next.uiOverlayMode, sizeof(next.uiOverlayMode))) {
+        }
+        if (jsonFindString(ui, "\"titleKey\"", next.uiTitleKey, sizeof(next.uiTitleKey))) {
         }
         if (jsonFindString(ui, "\"retryScope\"", next.uiRetryScope, sizeof(next.uiRetryScope))) {
         }
