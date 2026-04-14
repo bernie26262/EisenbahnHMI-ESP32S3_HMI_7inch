@@ -93,6 +93,9 @@ struct HmiDebugState {
     uint16_t mega2SignalGrantMask = 0;
     bool mega2BlockOccValid = false;
     bool mega2SignalGrantValid = false;
+    uint8_t mega2SbhfState = 0;
+    uint8_t mega2SbhfCurrentGleis = 0;
+    bool mega2Block5ToSbhfActive = false;
     bool uiStartupOverlayActive = false;
     bool uiM1RetryOverlayActive = false;
     bool uiM2RetryOverlayActive = false;
@@ -869,10 +872,15 @@ static bool hmiStartupAllDone() {
 }
 
 static bool hmiCanSendEmergencySbhfSelftestNow() {
+    const bool sbhfRecoveryRelevant =
+        (g_dbg.safetyErrorType == 3u) ||
+        g_dbg.mega2SelftestRetryAvailable ||
+        hmiHasMega2Defects();
+
     return hmiCanWriteNow() &&
            g_dbg.mega2Online &&
            hmiEmergencyOverlayActive() &&
-           (g_dbg.safetyErrorType == 3u) &&
+           sbhfRecoveryRelevant &&
            (!hmiM2SelftestDefinitelyRunningFromState()) &&
            (!g_pendingStartupM2);
 }
@@ -1213,6 +1221,7 @@ static void hmiUiOnM1RetryClicked(lv_event_t* e) {
     g_retryOverlayDismissed = false;
     g_uiDirty = true;
 
+    hmiSendActionCommand("powerOff");
     hmiSendActionCommand("m1SelftestStart");
     hmiUiAfterTxAttempt();
 }
@@ -2493,7 +2502,10 @@ static void hmiEmergencyOverlayUpdate() {
     lv_obj_add_flag(g_ui.startupM1Btn, LV_OBJ_FLAG_HIDDEN);
     lv_obj_clear_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
 
-    const bool showSbhfSelftest = (g_dbg.safetyErrorType == 3u);
+    const bool showSbhfSelftest =
+        (g_dbg.safetyErrorType == 3u) ||
+        g_dbg.mega2SelftestRetryAvailable ||
+        hmiHasMega2Defects();
     if (showSbhfSelftest) {
         lv_obj_clear_flag(g_ui.startupM2Btn, LV_OBJ_FLAG_HIDDEN);
     } else {
@@ -2651,20 +2663,7 @@ static uint8_t hmiGrantDisplayBitToMaskBit(uint8_t displayBit) {
     // UI-Display-Reihenfolge ist bewusst von der Bit-Reihenfolge im Payload entkoppelt.
     // Sonderfälle wie SBHF3->6 und 6->4 bleiben damit zentral dokumentiert.
     static const uint8_t kMap[12] = {
-        0,  // 1->2
-        1,  // 2->3
-        2,  // 3->4
-        3,  // 4->1
-        4,  // 4->5
-
-        5,  // 5->SBHF1
-        6,  // 5->SBHF2
-        7,  // 5->SBHF3
-
-        8,  // SBHF1->6
-        9,  // SBHF2->6
-        10, // SBHF3->6   ❗ war falsch
-        11  // 6->4       ❗ war falsch
+        0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11
     };
 
     return (displayBit < 12u) ? kMap[displayBit] : 0u;
@@ -2677,6 +2676,7 @@ static void hmiBuildBlocksTabText(char* out, size_t outSize) {
     
     const bool occValid = g_dbg.mega2Online && g_dbg.mega2BlockOccValid;
     const bool sigValid = g_dbg.mega2Online && g_dbg.mega2SignalGrantValid;
+    const bool sbhfExitRunning = (g_dbg.mega2SbhfState == 4u);
 
     auto occLed = [&](uint8_t bit) -> const char* {
         if (!occValid) return "#808080 o#";
@@ -2696,6 +2696,16 @@ static void hmiBuildBlocksTabText(char* out, size_t outSize) {
     auto sigStrDisplay = [&](uint8_t displayBit) -> const char* {
         return sigStr(hmiGrantDisplayBitToMaskBit(displayBit));
     };
+    auto sbhfExitStr = [&](uint8_t gleis) -> const char* {
+        if (!g_dbg.mega2Online) return "#808080 ?#";
+        if (sbhfExitRunning && g_dbg.mega2SbhfCurrentGleis == gleis) {
+            return "#00d000 G#";
+        }
+        return "#ff3030 R#";
+    };
+    const char* sig5ToSbhf =
+        !g_dbg.mega2Online ? "#808080 ?#" :
+        (g_dbg.mega2Block5ToSbhfActive ? "#00d000 G#" : "#ff3030 R#");
 
     const int n = snprintf(
         out, outSize,
@@ -2706,7 +2716,7 @@ static void hmiBuildBlocksTabText(char* out, size_t outSize) {
         "Blockfreigaben:\n"
         "1->2: %s   2->3: %s   3->4: %s\n"
         "4->1: %s   4->5: %s\n"
-        "5->SBHF1: %s   5->SBHF2: %s   5->SBHF3: %s\n"
+        "5->SBHF: %s\n"
         "SBHF1->6: %s   SBHF2->6: %s   SBHF3->6: %s\n"
         "6->4: %s",
         occLedDisplay(0), occLedDisplay(1), occLedDisplay(2), occLedDisplay(3),
@@ -2714,8 +2724,8 @@ static void hmiBuildBlocksTabText(char* out, size_t outSize) {
         occLedDisplay(6), occLedDisplay(7), occLedDisplay(8),
         sigStrDisplay(0), sigStrDisplay(1), sigStrDisplay(2),
         sigStrDisplay(3), sigStrDisplay(4),
-        sigStrDisplay(5), sigStrDisplay(6), sigStrDisplay(7),
-        sigStrDisplay(8), sigStrDisplay(9), sigStrDisplay(10),
+        sig5ToSbhf,
+        sbhfExitStr(1), sbhfExitStr(2), sbhfExitStr(3),
         sigStrDisplay(11)
     );
 
@@ -2724,6 +2734,9 @@ static void hmiBuildBlocksTabText(char* out, size_t outSize) {
             out, outSize,
             "B1: ? B2: ? B3: ? B4: ? B5: ? B6: ?\n"
             "SBHF1: ? SBHF2: ? SBHF3: ?\n"
+            "\n"
+            "Blockfreigaben:\n"
+            "1->2: ? 2->3: ? 3->4: ?"
             "\nFreigaben\n"
             "Anzeige zu lang"
         );
@@ -2771,6 +2784,9 @@ static void hmiBuildDebugTabText(char* out, size_t outSize) {
         "vA10: %u\n"
         "vB10: %u\n"
         "CTRL: %s\n"
+        "SBHF state: %u\n"
+        "SBHF gleis: %u\n"
+        "B5->SBHF: %s\n"
         "WRITE: %s\n"
         "lastMsg: %s\n"
         "lastErr: %s",
@@ -2780,7 +2796,10 @@ static void hmiBuildDebugTabText(char* out, size_t outSize) {
         (unsigned long)g_dbg.jsonOk, (unsigned long)g_dbg.jsonErr, (unsigned long)g_dbg.rxTimeouts, (unsigned long)g_dbg.rxLenErr,
         (unsigned long)g_dbg.rxBadFrames, (unsigned long)g_dbg.rxOverflow, (unsigned long)uptimeS, (unsigned long)g_dbg.txFrames,
         (unsigned long)g_dbg.txErr, (unsigned long)g_dbg.txDropped, g_dbg.lastTx, (unsigned long)g_uiUpdateLastMs, (unsigned long)g_uiUpdateMaxMs,
-        (unsigned)g_dbg.analogVA10, (unsigned)g_dbg.analogVB10, hmiUiCtrlText(), hmiUiWriteText(), g_dbg.lastMsgType, g_dbg.lastRxErrorDisplay
+        (unsigned)g_dbg.analogVA10, (unsigned)g_dbg.analogVB10,
+        hmiUiCtrlText(),
+        (unsigned)g_dbg.mega2SbhfState, (unsigned)g_dbg.mega2SbhfCurrentGleis, g_dbg.mega2Block5ToSbhfActive ? "true" : "false",
+        hmiUiWriteText(), g_dbg.lastMsgType, g_dbg.lastRxErrorDisplay
    );
 }
 
@@ -3403,6 +3422,9 @@ struct ParsedState {
         uint16_t mega2SignalGrantMask = 0;
         bool mega2BlockOccValid = false;
         bool mega2SignalGrantValid = false;
+        uint8_t mega2SbhfState = 0;
+        uint8_t mega2SbhfCurrentGleis = 0;
+        bool mega2Block5ToSbhfActive = false;
 
         // UI-/Overlay-bezogene Zustandsinfos
         bool uiStartupOverlayActive = false;
@@ -3475,6 +3497,9 @@ static void hmiSeedParsedStateFromCurrent(ParsedState& dst) {
     dst.mega2SignalGrantMask = g_dbg.mega2SignalGrantMask;
     dst.mega2BlockOccValid = g_dbg.mega2BlockOccValid;
     dst.mega2SignalGrantValid = g_dbg.mega2SignalGrantValid;
+    dst.mega2SbhfState = g_dbg.mega2SbhfState;
+    dst.mega2SbhfCurrentGleis = g_dbg.mega2SbhfCurrentGleis;
+    dst.mega2Block5ToSbhfActive = g_dbg.mega2Block5ToSbhfActive;
 
     dst.uiStartupOverlayActive = g_dbg.uiStartupOverlayActive;
     dst.uiM1RetryOverlayActive = g_dbg.uiM1RetryOverlayActive;
@@ -3545,6 +3570,9 @@ static void hmiApplyParsedState(const ParsedState& next) {
     g_dbg.mega2SignalGrantMask = next.mega2SignalGrantMask;
     g_dbg.mega2BlockOccValid = next.mega2BlockOccValid;
     g_dbg.mega2SignalGrantValid = next.mega2SignalGrantValid;
+    g_dbg.mega2SbhfState = next.mega2SbhfState;
+    g_dbg.mega2SbhfCurrentGleis = next.mega2SbhfCurrentGleis;
+    g_dbg.mega2Block5ToSbhfActive = next.mega2Block5ToSbhfActive;
 
     g_dbg.uiStartupOverlayActive = next.uiStartupOverlayActive;
     g_dbg.uiM1RetryOverlayActive = next.uiM1RetryOverlayActive;
@@ -3718,6 +3746,15 @@ static void hmiDebugExtractStatusFromJson(const char* json) {
         const char* sbhf = strstr(mega2, "\"sbhf\"");
         if (sbhf && jsonFindBool(sbhf, "\"selftestDone\"", &b)) {
             next.mega2SbhfSelftestDone = b;
+        }
+        if (sbhf && jsonFindUInt8(sbhf, "\"state\"", &u8)) {
+            next.mega2SbhfState = u8;
+        }
+        if (sbhf && jsonFindUInt8(sbhf, "\"currentGleis\"", &u8)) {
+            next.mega2SbhfCurrentGleis = u8;
+        }
+        if (sbhf && jsonFindBool(sbhf, "\"block5ToSbhfActive\"", &b)) {
+            next.mega2Block5ToSbhfActive = b;
         }
         const char* shadow = strstr(mega2, "\"shadow\"");
         if (shadow && jsonFindUInt8(shadow, "\"selftestFlags\"", &u8)) next.mega2ShadowSelftestFlags = u8;
