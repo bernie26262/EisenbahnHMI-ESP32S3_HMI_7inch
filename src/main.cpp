@@ -6,13 +6,14 @@
 
 #define HMI_DEBUG_DUMMY 0
 
-#define UART_FRAME_BUF_SIZE 4096
+#define UART_FRAME_BUF_SIZE 8192
 #define HMI_SYNC_1 0xA5
 #define HMI_SYNC_2 0x5A
 
 // Testweise etwas großzügiger, damit ein laufender Frame nicht zu früh verworfen wird.
 // Falls nötig später wieder reduzieren.
-#define HMI_RX_TIMEOUT_MS 1500
+#define HMI_RX_HDR_TIMEOUT_MS 1500
+#define HMI_RX_PAYLOAD_TIMEOUT_MS 500
 
 enum HmiRxState : uint8_t {
     RX_WAIT_SYNC1 = 0,
@@ -119,8 +120,35 @@ struct HmiDebugState {
     uint32_t txErr = 0;
     uint32_t txDropped = 0;
     char lastTx[24] = "-";
+    uint32_t rxFrameSeq = 0;
+    uint32_t ackSeq = 0;
+    uint32_t jsonSeq = 0;
+    uint32_t uiSeq = 0;
+    uint32_t rxFrameCompleteMs = 0;
+    uint32_t ackTxMs = 0;
+    uint32_t ackDelayMs = 0;
+    uint32_t jsonStartMs = 0;
+    uint32_t jsonEndMs = 0;
+    uint32_t jsonLastMs = 0;
+    uint32_t jsonMaxMs = 0;
+    uint32_t uiApplyStartMs = 0;
+    uint32_t uiApplyEndMs = 0;
     bool diagActive = false;
     char diagOwner[16] = "-";
+
+    // Golden parser / raw RX diagnostics
+    uint32_t rawTailBytes = 0;
+    char rawTailHex[97] = "-";
+    char rawTailAscii[49] = "-";
+
+    uint32_t gpFrames = 0;
+    uint32_t gpTimeouts = 0;
+    uint32_t gpLenErr = 0;
+    uint32_t gpBadSync = 0;
+    uint16_t gpExpectedLen = 0;
+    uint16_t gpGotLen = 0;
+    char gpStateText[12] = "IDLE";
+    char gpLastErr[32] = "-";
 };
 
 struct HmiUi {
@@ -282,9 +310,16 @@ static uint32_t g_lastStartupOverlayUpdateMs = 0;
 static uint32_t g_lastRetryOverlayUpdateMs = 0;
 static constexpr uint32_t HMI_OVERLAY_REFRESH_MS = 250;
 static uint32_t g_uiUpdateMaxMs = 0;
+static uint32_t g_lastDebugTabRebuildMs = 0;
+static constexpr uint32_t HMI_DEBUGTAB_REFRESH_MS = 250;
+static char g_debugTabCache[768] = "";
+static uint32_t g_lastUiAppliedSeq = 0;
 static bool g_stateUiPending = false;
 static bool g_analogDirty = false;
 static uint32_t g_stateUiPendingSinceMs = 0;
+static uint32_t g_rxBoostUntilMs = 0;
+
+static constexpr uint32_t HMI_RX_BOOST_AFTER_LOCAL_TX_MS = 400;
 static bool g_blocksTabPrimed = false;
 static bool g_startupOverlayPrimed = false;
 static uint32_t g_lastActiveLeftTab = 0xFFFFFFFFu;
@@ -320,6 +355,17 @@ static void hmiSetCachedLabelText(
 );
 static bool g_startupSessionActive = false;
 static uint32_t g_lastFrameByteMs = 0;
+
+// raw tail debug
+static uint8_t g_rawTail[32];
+static uint8_t g_rawTailPos = 0;
+static uint32_t g_rawTailCount = 0;
+
+// golden parser (shadow only)
+static HmiRxState g_gpState = RX_WAIT_SYNC1;
+static uint16_t g_gpExpectedLen = 0;
+static uint16_t g_gpPos = 0;
+static uint32_t g_gpLastByteMs = 0;
 static HmiRxState g_rxState = RX_WAIT_SYNC1;
 static uint16_t g_rxExpectedLen = 0;
 
@@ -373,6 +419,16 @@ static void frameParserReset();
 static void frameParserCommitPayload();
 static void frameParserCheckTimeout(uint32_t nowMs);
 static void frameParserProcessByte(uint8_t b);
+static void pollUartRxBurst(uint8_t rounds);
+static bool frameParserBusy();
+static bool frameParserReadingPayload();
+static void noteLocalHmiTx();
+static void rawTailPushByte(uint8_t b);
+static void rawTailBuildDebugStrings();
+static void goldenParserReset();
+static void goldenParserCheckTimeout(uint32_t nowMs);
+static void goldenParserProcessByte(uint8_t b);
+static void goldenParserRefreshStateDebug();
 
 static void hmiBuildBlocksTabText(char* out, size_t outSize);
 static void hmiBuildDebugTabText(char* out, size_t outSize);
@@ -443,6 +499,61 @@ static void hmiRxRefreshStateDebug() {
     g_dbg.rxStateText[sizeof(g_dbg.rxStateText) - 1] = '\0';
     g_dbg.rxExpectedLen = g_rxExpectedLen;
     g_dbg.rxGotLen = (uint16_t)g_uartFramePos;
+}
+
+static void goldenParserRefreshStateDebug() {
+    strncpy(g_dbg.gpStateText, rxStateToText(g_gpState), sizeof(g_dbg.gpStateText) - 1);
+    g_dbg.gpStateText[sizeof(g_dbg.gpStateText) - 1] = '\0';
+    g_dbg.gpExpectedLen = g_gpExpectedLen;
+    g_dbg.gpGotLen = g_gpPos;
+}
+
+static void rawTailPushByte(uint8_t b) {
+    g_rawTail[g_rawTailPos] = b;
+    g_rawTailPos = (uint8_t)((g_rawTailPos + 1u) % (uint8_t)sizeof(g_rawTail));
+    g_rawTailCount++;
+    g_dbg.rawTailBytes = g_rawTailCount;
+}
+
+static void rawTailBuildDebugStrings() {
+    const size_t cap = sizeof(g_rawTail);
+    const size_t have = (g_rawTailCount < cap) ? (size_t)g_rawTailCount : cap;
+
+    if (have == 0) {
+        strncpy(g_dbg.rawTailHex, "-", sizeof(g_dbg.rawTailHex) - 1);
+        g_dbg.rawTailHex[sizeof(g_dbg.rawTailHex) - 1] = '\0';
+        strncpy(g_dbg.rawTailAscii, "-", sizeof(g_dbg.rawTailAscii) - 1);
+        g_dbg.rawTailAscii[sizeof(g_dbg.rawTailAscii) - 1] = '\0';
+        return;
+    }
+
+    size_t hexPos = 0;
+    size_t ascPos = 0;
+    for (size_t i = 0; i < have; ++i) {
+        const size_t idx = (g_rawTailPos + cap - have + i) % cap;
+        const uint8_t b = g_rawTail[idx];
+
+        if (hexPos + 3 < sizeof(g_dbg.rawTailHex)) {
+            snprintf(&g_dbg.rawTailHex[hexPos], sizeof(g_dbg.rawTailHex) - hexPos, "%02X ", (unsigned)b);
+            hexPos += 3;
+        }
+
+        if (ascPos + 1 < sizeof(g_dbg.rawTailAscii)) {
+            g_dbg.rawTailAscii[ascPos++] = (b >= 32 && b <= 126) ? (char)b : '.';
+        }
+    }
+
+    if (hexPos > 0 && hexPos < sizeof(g_dbg.rawTailHex)) {
+        g_dbg.rawTailHex[hexPos - 1] = '\0';
+    } else {
+        g_dbg.rawTailHex[sizeof(g_dbg.rawTailHex) - 1] = '\0';
+    }
+
+    if (ascPos < sizeof(g_dbg.rawTailAscii)) {
+        g_dbg.rawTailAscii[ascPos] = '\0';
+    } else {
+        g_dbg.rawTailAscii[sizeof(g_dbg.rawTailAscii) - 1] = '\0';
+    }
 }
 
 static void hmiRxSetError(const char* msg) {
@@ -647,7 +758,6 @@ static bool hmiSendActionCommand(const char* action) {
     size_t written = 0;
     written += Serial0.write((const uint8_t*)line, (size_t)len);
     written += Serial0.write((uint8_t)'\n');
-    Serial0.flush();
 
     if (written != (size_t)len + 1U) {
         g_dbg.txErr++;
@@ -655,8 +765,58 @@ static bool hmiSendActionCommand(const char* action) {
         return false;
     }
 
+    noteLocalHmiTx();
+
     g_dbg.txFrames++;
     hmiTxSetLast(action);
+    return true;
+}
+
+// ACK für ETH->HMI-Frames.
+// Wird nur gesendet, wenn das empfangene Frame eine seq enthält
+// und die Payload vollständig empfangen + als brauchbares JSON akzeptiert wurde.
+static bool hmiSendAckCommand(uint32_t seq) {
+    if (seq == 0) {
+        g_dbg.txErr++;
+        hmiTxSetLast("bad-ack");
+        return false;
+    }
+
+    g_dbg.ackSeq = seq;
+    g_dbg.ackTxMs = millis();
+    if (g_dbg.rxFrameCompleteMs != 0 &&
+        g_dbg.ackTxMs >= g_dbg.rxFrameCompleteMs) {
+        g_dbg.ackDelayMs = g_dbg.ackTxMs - g_dbg.rxFrameCompleteMs;
+    } else {
+        g_dbg.ackDelayMs = 0;
+    }
+
+    char line[64];
+    const int len = snprintf(
+        line,
+        sizeof(line),
+        "{\"type\":\"ack\",\"seq\":%lu}",
+        (unsigned long)seq
+    );
+
+    if (len <= 0 || (size_t)len >= sizeof(line)) {
+        g_dbg.txErr++;
+        hmiTxSetLast("ack-fmt");
+        return false;
+    }
+
+    size_t written = 0;
+    written += Serial0.write((const uint8_t*)line, (size_t)len);
+    written += Serial0.write((uint8_t)'\n');
+
+    if (written != (size_t)len + 1U) {
+        g_dbg.txErr++;
+        hmiTxSetLast("ack-uart");
+        return false;
+    }
+
+    g_dbg.txFrames++;
+    hmiTxSetLast("ack");
     return true;
 }
 
@@ -1358,13 +1518,14 @@ static bool hmiSendM1WeicheSet(uint8_t idx, bool gerade) {
     size_t written = 0;
     written += Serial0.write((const uint8_t*)line, (size_t)len);
     written += Serial0.write((uint8_t)'\n');
-    Serial0.flush();
 
     if (written != (size_t)len + 1U) {
         g_dbg.txErr++;
         hmiTxSetLast("uart-err");
         return false;
     }
+
+    noteLocalHmiTx();
 
     g_dbg.txFrames++;
     hmiTxSetLast("m1WeicheSet");
@@ -1396,13 +1557,14 @@ static bool hmiSendM1PowerSet(uint8_t bhf, bool on) {
     size_t written = 0;
     written += Serial0.write((const uint8_t*)line, (size_t)len);
     written += Serial0.write((uint8_t)'\n');
-    Serial0.flush();
 
     if (written != (size_t)len + 1U) {
         g_dbg.txErr++;
         hmiTxSetLast("uart-err");
         return false;
     }
+
+    noteLocalHmiTx();
 
     g_dbg.txFrames++;
     hmiTxSetLast("m1PowerSet");
@@ -2760,12 +2922,19 @@ static void hmiBuildDebugTabText(char* out, size_t outSize) {
         outSize,
         "UART: %s\n"
         "rxState: %s\n"
+        "gpState: %s\n"
         "expLen: %u\n"
         "gotLen: %u\n"
+        "gpExp: %u\n"
+        "gpGot: %u\n"
         "okLen: %u\n"
         "errLen: %u\n"
         "hdrTout: %lu\n"
         "payTout: %lu\n"
+        "gpTout: %lu\n"
+        "gpLen: %lu\n"
+        "gpBad: %lu\n"
+        "gpFrames: %lu\n"
         "rxBytes: %lu\n"
         "rxFrames: %lu\n"
         "jsonOk: %lu\n"
@@ -2779,8 +2948,20 @@ static void hmiBuildDebugTabText(char* out, size_t outSize) {
         "txErr: %lu\n"
         "txDrop: %lu\n"
         "lastTx: %s\n"
+        "rxSeq: %lu\n"
+        "ackSeq: %lu\n"
+        "ackMs: %lu\n"
+        "jsonSeq: %lu\n"
+        "jsonMs: %lu\n"
+        "jsonMax: %lu\n"
+        "uiSeq: %lu\n"
         "uiMsLast: %lu\n"
         "uiMsMax: %lu\n"
+        "\n--- RXDBG ---\n"
+        "gp:%s %u/%u f:%lu t:%lu\n"
+        "err:%s\n"
+        "raw:%s\n"
+        "asc:%s\n"
         "vA10: %u\n"
         "vB10: %u\n"
         "CTRL: %s\n"
@@ -2790,12 +2971,43 @@ static void hmiBuildDebugTabText(char* out, size_t outSize) {
         "WRITE: %s\n"
         "lastMsg: %s\n"
         "lastErr: %s",
-        g_dbg.uartConnected ? "connected" : "idle", g_dbg.rxStateText,
-        (unsigned)g_dbg.rxExpectedLen, (unsigned)g_dbg.rxGotLen, (unsigned)g_dbg.lastOkLen, (unsigned)g_dbg.lastErrLen,
-        (unsigned long)g_dbg.rxHdrTimeouts, (unsigned long)g_dbg.rxPayloadTimeouts, (unsigned long)g_dbg.rxBytes, (unsigned long)g_dbg.rxFrames,
+        g_dbg.uartConnected ? "connected" : "idle",
+        g_dbg.rxStateText,
+        g_dbg.gpStateText,
+        (unsigned)g_dbg.rxExpectedLen,
+        (unsigned)g_dbg.rxGotLen,
+        (unsigned)g_dbg.gpExpectedLen,
+        (unsigned)g_dbg.gpGotLen,
+        (unsigned)g_dbg.lastOkLen,
+        (unsigned)g_dbg.lastErrLen,
+        (unsigned long)g_dbg.rxHdrTimeouts,
+        (unsigned long)g_dbg.rxPayloadTimeouts,
+        (unsigned long)g_dbg.gpTimeouts,
+        (unsigned long)g_dbg.gpLenErr,
+        (unsigned long)g_dbg.gpBadSync,
+        (unsigned long)g_dbg.gpFrames,
+        (unsigned long)g_dbg.rxBytes,
+        (unsigned long)g_dbg.rxFrames,
         (unsigned long)g_dbg.jsonOk, (unsigned long)g_dbg.jsonErr, (unsigned long)g_dbg.rxTimeouts, (unsigned long)g_dbg.rxLenErr,
         (unsigned long)g_dbg.rxBadFrames, (unsigned long)g_dbg.rxOverflow, (unsigned long)uptimeS, (unsigned long)g_dbg.txFrames,
-        (unsigned long)g_dbg.txErr, (unsigned long)g_dbg.txDropped, g_dbg.lastTx, (unsigned long)g_uiUpdateLastMs, (unsigned long)g_uiUpdateMaxMs,
+        (unsigned long)g_dbg.txErr, (unsigned long)g_dbg.txDropped, g_dbg.lastTx,
+        (unsigned long)g_dbg.rxFrameSeq,
+        (unsigned long)g_dbg.ackSeq,
+        (unsigned long)g_dbg.ackDelayMs,
+        (unsigned long)g_dbg.jsonSeq,
+        (unsigned long)g_dbg.jsonLastMs,
+        (unsigned long)g_dbg.jsonMaxMs,
+        (unsigned long)g_dbg.uiSeq,
+        (unsigned long)g_uiUpdateLastMs,
+        (unsigned long)g_uiUpdateMaxMs,
+        g_dbg.gpStateText,
+        (unsigned)g_dbg.gpExpectedLen,
+        (unsigned)g_dbg.gpGotLen,
+        (unsigned long)g_dbg.gpFrames,
+        (unsigned long)g_dbg.gpTimeouts,
+        g_dbg.gpLastErr,
+        g_dbg.rawTailHex,
+        g_dbg.rawTailAscii,
         (unsigned)g_dbg.analogVA10, (unsigned)g_dbg.analogVB10,
         hmiUiCtrlText(),
         (unsigned)g_dbg.mega2SbhfState, (unsigned)g_dbg.mega2SbhfCurrentGleis, g_dbg.mega2Block5ToSbhfActive ? "true" : "false",
@@ -2847,6 +3059,7 @@ static void hmiUiUpdate() {
     // ueber Render-Caches / Dirty-Zustaende gepflegt.
 
     const bool updateDebugTab = (activeLeftTab == 3u);
+    const bool enteringDebugTab = (activeLeftTab == 3u) && (g_lastActiveLeftTab != 3u);
     const bool enteringBlocksTab = (activeLeftTab == 2u) && (g_lastActiveLeftTab != 2u);
 
     bool m1Warn = false;
@@ -3250,9 +3463,18 @@ static void hmiUiUpdate() {
     }
 
     if (updateDebugTab && g_ui.debugTabLabel) {
-        char dbgBuf[768];
-        hmiBuildDebugTabText(dbgBuf, sizeof(dbgBuf));
-        lv_label_set_text(g_ui.debugTabLabel, dbgBuf);
+        const uint32_t nowMs = millis();
+        if (enteringDebugTab ||
+            (uint32_t)(nowMs - g_lastDebugTabRebuildMs) >= HMI_DEBUGTAB_REFRESH_MS) {
+            char dbgBuf[768];
+            hmiBuildDebugTabText(dbgBuf, sizeof(dbgBuf));
+            if (strcmp(g_debugTabCache, dbgBuf) != 0) {
+                strncpy(g_debugTabCache, dbgBuf, sizeof(g_debugTabCache) - 1);
+                g_debugTabCache[sizeof(g_debugTabCache) - 1] = '\0';
+                lv_label_set_text(g_ui.debugTabLabel, g_debugTabCache);
+            }
+            g_lastDebugTabRebuildMs = nowMs;
+        }
     }
 
     hmiSetCachedLabelText(
@@ -4050,6 +4272,13 @@ static void frameParserReset() {
     hmiRxRefreshStateDebug();
 }
 
+static void goldenParserReset() {
+    g_gpPos = 0;
+    g_gpExpectedLen = 0;
+    g_gpState = RX_WAIT_SYNC1;
+    goldenParserRefreshStateDebug();
+}
+
 static void frameParserCommitPayload() {
     if (!g_uartFrameBuf) {
         frameParserReset();
@@ -4075,8 +4304,27 @@ static void frameParserCommitPayload() {
         return;
     }
 
-    hmiDebugSetMsgTypeFromJson(g_uartFrameBuf);
+    uint32_t seq = 0;
     g_dbg.lastOkLen = (uint16_t)g_uartFramePos;
+    g_dbg.rxFrameCompleteMs = millis();
+
+    // ACK nur für Frames mit expliziter Sequenznummer.
+    // Jetzt bewusst so früh wie möglich:
+    // sofort nach komplettem Frame + minimalem Sanity-Check,
+    // noch vor Debug-/Status-Parsing und vor späterem UI-Apply.
+    if (jsonFindUInt32(g_uartFrameBuf, "\"seq\"", &seq)) {
+        g_dbg.rxFrameSeq = seq;
+        hmiSendAckCommand(seq);
+    } else {
+        g_dbg.rxFrameSeq = 0;
+        g_dbg.ackSeq = 0;
+        g_dbg.ackDelayMs = 0;
+    }
+
+    g_dbg.jsonSeq = seq;
+    g_dbg.jsonStartMs = millis();
+
+    hmiDebugSetMsgTypeFromJson(g_uartFrameBuf);
 
     if (hmiJsonIsAnalog(g_uartFrameBuf)) {
         hmiDebugExtractAnalogFromJson(g_uartFrameBuf);
@@ -4088,7 +4336,13 @@ static void frameParserCommitPayload() {
         }
         g_stateUiPending = true;
     }
-    
+
+    g_dbg.jsonEndMs = millis();
+    g_dbg.jsonLastMs = g_dbg.jsonEndMs - g_dbg.jsonStartMs;
+    if (g_dbg.jsonLastMs > g_dbg.jsonMaxMs) {
+        g_dbg.jsonMaxMs = g_dbg.jsonLastMs;
+    }
+
     g_dbg.jsonOk++;
     frameParserReset();
 }
@@ -4098,7 +4352,11 @@ static void frameParserCheckTimeout(uint32_t nowMs) {
         return;
     }
 
-    if ((nowMs - g_lastFrameByteMs) >= HMI_RX_TIMEOUT_MS) {
+    const uint32_t ageMs = nowMs - g_lastFrameByteMs;
+    const uint32_t timeoutMs =
+        (g_rxState == RX_READ_PAYLOAD) ? HMI_RX_PAYLOAD_TIMEOUT_MS : HMI_RX_HDR_TIMEOUT_MS;
+
+    if (ageMs >= timeoutMs) {
         g_dbg.rxTimeouts++;
         g_dbg.lastErrLen = (uint16_t)g_uartFramePos;
 
@@ -4117,6 +4375,40 @@ static void frameParserCheckTimeout(uint32_t nowMs) {
         }
         frameParserReset();
     }
+}
+
+static void goldenParserCheckTimeout(uint32_t nowMs) {
+    if (g_gpState == RX_WAIT_SYNC1) {
+        return;
+    }
+
+    const uint32_t ageMs = nowMs - g_gpLastByteMs;
+    const uint32_t timeoutMs =
+        (g_gpState == RX_READ_PAYLOAD) ? HMI_RX_PAYLOAD_TIMEOUT_MS : HMI_RX_HDR_TIMEOUT_MS;
+
+    if (ageMs >= timeoutMs) {
+        g_dbg.gpTimeouts++;
+        if (g_gpState == RX_READ_PAYLOAD) {
+            snprintf(g_dbg.gpLastErr, sizeof(g_dbg.gpLastErr),
+                     "PAY %u/%u", (unsigned)g_gpPos, (unsigned)g_gpExpectedLen);
+        } else {
+            snprintf(g_dbg.gpLastErr, sizeof(g_dbg.gpLastErr),
+                     "HDR st=%u", (unsigned)g_gpState);
+        }
+        goldenParserReset();
+    }
+}
+
+static bool frameParserBusy() {
+    return g_rxState != RX_WAIT_SYNC1;
+}
+
+static bool frameParserReadingPayload() {
+    return g_rxState == RX_READ_PAYLOAD;
+}
+
+static void noteLocalHmiTx() {
+    g_rxBoostUntilMs = millis() + HMI_RX_BOOST_AFTER_LOCAL_TX_MS;
 }
 
 static void frameParserProcessByte(uint8_t b) {
@@ -4201,38 +4493,138 @@ static void frameParserProcessByte(uint8_t b) {
     }
 }
 
+static void goldenParserProcessByte(uint8_t b) {
+    g_gpLastByteMs = millis();
+
+    switch (g_gpState) {
+        case RX_WAIT_SYNC1:
+            if (b == HMI_SYNC_1) {
+                g_gpState = RX_WAIT_SYNC2;
+            }
+            break;
+
+        case RX_WAIT_SYNC2:
+            if (b == HMI_SYNC_2) {
+                g_gpState = RX_WAIT_LEN1;
+            } else if (b == HMI_SYNC_1) {
+                g_gpState = RX_WAIT_SYNC2;
+            } else {
+                g_dbg.gpBadSync++;
+                g_gpState = RX_WAIT_SYNC1;
+            }
+            break;
+
+        case RX_WAIT_LEN1:
+            g_gpExpectedLen = (uint16_t)b;
+            g_gpState = RX_WAIT_LEN2;
+            break;
+
+        case RX_WAIT_LEN2:
+            g_gpExpectedLen |= ((uint16_t)b << 8);
+            if (g_gpExpectedLen == 0 || g_gpExpectedLen >= UART_FRAME_BUF_SIZE) {
+                g_dbg.gpLenErr++;
+                snprintf(g_dbg.gpLastErr, sizeof(g_dbg.gpLastErr),
+                         "LEN %u", (unsigned)g_gpExpectedLen);
+                goldenParserReset();
+                break;
+            }
+            g_gpPos = 0;
+            g_gpState = RX_READ_PAYLOAD;
+            break;
+
+        case RX_READ_PAYLOAD:
+            if (g_gpPos < g_gpExpectedLen) {
+                g_gpPos++;
+            }
+            if (g_gpPos == g_gpExpectedLen) {
+                g_dbg.gpFrames++;
+                strncpy(g_dbg.gpLastErr, "-", sizeof(g_dbg.gpLastErr) - 1);
+                g_dbg.gpLastErr[sizeof(g_dbg.gpLastErr) - 1] = '\0';
+                goldenParserReset();
+                break;
+            }
+            break;
+    }
+
+    goldenParserRefreshStateDebug();
+}
+
 static void pollUartRx() {
     if (!g_uartFrameBuf) {
         return;
     }
 
-    // UART in einem Rutsch möglichst vollständig leeren, damit keine Payload-Fragmente
-    // im HW/Driver-Puffer stehen bleiben, während UI/LVGL läuft.
+    // UART möglichst effizient in Blöcken leeren.
+    // Große state-lite-Frames sollen nicht daran scheitern,
+    // dass wir pro Loop nur einzelne Bytes abholen.
+    uint8_t tmp[256];
     uint32_t drained = 0;
-    while (Serial0.available() > 0) {
-        const uint8_t b = (uint8_t)Serial0.read();
 
-        g_dbg.rxBytes++;
+    while (true) {
+        int avail = Serial0.available();
+        size_t want = 0;
+
+        if (avail > 0) {
+            want = (size_t)avail;
+            if (want > sizeof(tmp)) {
+                want = sizeof(tmp);
+            }
+        } else if (frameParserReadingPayload() && g_uartFramePos < g_rxExpectedLen) {
+            // Wir sind mitten in einer Payload.
+            // Nicht sofort aufgeben, nur weil gerade für einen Moment kein Byte
+            // im Arduino-Buffer liegt. Kurz auf die nächste Welle warten.
+            const size_t remaining = (size_t)(g_rxExpectedLen - g_uartFramePos);
+            want = remaining;
+            if (want > sizeof(tmp)) {
+                want = sizeof(tmp);
+            }
+        } else {
+            break;
+        }
+
+        const size_t got = Serial0.readBytes((char*)tmp, want);
+        if (got == 0) {
+            break;
+        }
+
         g_dbg.uartConnected = true;
         g_lastRxMs = millis();
 
-        frameParserProcessByte(b);
-        ++drained;
+        for (size_t i = 0; i < got; ++i) {
+            g_dbg.rxBytes++;
+            rawTailPushByte(tmp[i]);
+            goldenParserProcessByte(tmp[i]);
+            frameParserProcessByte(tmp[i]);
+        }
+
+        drained += (uint32_t)got;
 
         // Harte Sicherheitsgrenze gegen Endlosschleifen / kaputte available()-Situationen.
-        if (drained >= 8192) {
+        if (drained >= 16384) {
             break;
         }
     }
 
     frameParserCheckTimeout(millis());
+    goldenParserCheckTimeout(millis());
+    rawTailBuildDebugStrings();
     hmiRxRefreshStateDebug();
+}
+
+static void pollUartRxBurst(uint8_t rounds) {
+    for (uint8_t i = 0; i < rounds; ++i) {
+        pollUartRx();
+        if (Serial0.available() <= 0) {
+            break;
+        }
+    }
 }
 
 void setup() {
     Serial0.begin(115200);
     // Größerer RX-Puffer, damit während LVGL-/UI-Arbeit keine Bytes verloren gehen.
-    Serial0.setRxBufferSize(4096);
+    Serial0.setRxBufferSize(8192);
+    Serial0.setTimeout(2);
     delay(200);
     Serial0.println();
     Serial0.println("HMI Display Boot");
@@ -4257,6 +4649,7 @@ void setup() {
     g_dbg.uartConnected = false;
     hmiDebugSetLastMsg("boot");
     frameParserReset();
+    goldenParserReset();
 
     if (lvgl_port_lock(-1)) {
         lv_obj_set_style_bg_color(lv_scr_act(), lv_color_black(), 0);
@@ -4275,9 +4668,9 @@ void loop() {
 #if HMI_DEBUG_DUMMY
     updateDummyDebugState();
 #else
-    // Früher UART abholen.
-    pollUartRx();
-    pollUartRx();
+    // Früher UART aggressiv abholen.
+    const bool rxBoost = ((int32_t)(millis() - g_rxBoostUntilMs) < 0);
+    pollUartRxBurst(rxBoost ? 24 : 8);
     const uint32_t nowRx = millis();
 
     if (g_dbg.uartConnected && (nowRx - g_lastRxMs >= 2000)) {
@@ -4291,6 +4684,7 @@ void loop() {
         ((uint32_t)(now - g_stateUiPendingSinceMs) >= HMI_STATE_UI_COALESCE_MS)) {
         g_uiDirty = true;
         g_stateUiPending = false;
+        g_lastUiAppliedSeq = g_dbg.rxFrameSeq;
     }
 
     if (g_analogDirty) {
@@ -4300,16 +4694,35 @@ void loop() {
 
     const bool uiDue = g_uiDirty;
     if (uiDue) {
+        // Direkt nach lokalem HMI-TX (Button-Klick etc.) RX strikt priorisieren,
+        // weil genau dann das erste große state-lite vom ETH kommt.
+        if (rxBoost) {
+            pollUartRxBurst(24);
+            delay(0);
+            return;
+        }
+
+        // Solange gerade noch ein Frame zusammengesetzt wird oder noch Bytes
+        // im UART-Buffer liegen, RX strikt priorisieren.
+        if (frameParserBusy() || Serial0.available() > 0) {
+            pollUartRxBurst(rxBoost ? 24 : 8);
+            delay(0);
+            return;
+        }
+
         // Vor dem UI-Update noch einmal UART leeren.
-        pollUartRx();
+        pollUartRxBurst(rxBoost ? 24 : 8);
 
         if (lvgl_port_lock(-1)) {
             if (uiDue) {
                 const uint32_t uiStartMs = millis();
+                g_dbg.uiApplyStartMs = uiStartMs;
+                g_dbg.uiSeq = g_lastUiAppliedSeq;
                 hmiUiUpdate();
                 g_uiDirty = false;
 
                 const uint32_t uiElapsedMs = millis() - uiStartMs;
+                g_dbg.uiApplyEndMs = millis();
                 g_uiUpdateLastMs = uiElapsedMs;
                 if (uiElapsedMs > g_uiUpdateMaxMs) {
                     g_uiUpdateMaxMs = uiElapsedMs;
@@ -4319,9 +4732,9 @@ void loop() {
         }
 
         // Direkt nach dem UI-Update erneut abholen, falls während LVGL neue Bytes ankamen.
-        pollUartRx();
+        pollUartRxBurst(rxBoost ? 24 : 8);
     }
     
-    // Kleiner halten als bisher, damit UART häufiger bedient wird.
-    delay(1);
+    // Noch kürzer, damit UART möglichst oft bedient wird.
+    delay(0);
 }
