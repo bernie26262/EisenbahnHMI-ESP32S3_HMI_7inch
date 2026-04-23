@@ -4621,7 +4621,7 @@ static void pollUartRxBurst(uint8_t rounds) {
 }
 
 void setup() {
-    Serial0.begin(115200);
+    Serial0.begin(230400);
     // Größerer RX-Puffer, damit während LVGL-/UI-Arbeit keine Bytes verloren gehen.
     Serial0.setRxBufferSize(8192);
     Serial0.setTimeout(2);
