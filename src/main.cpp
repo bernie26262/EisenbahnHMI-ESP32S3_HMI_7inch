@@ -78,9 +78,14 @@ struct HmiDebugState {
     bool actionCanStartupConfirm = false;
     bool summaryEmergencyPresent = false;
     uint8_t safetyBlockReason = 0;
-    uint8_t safetyErrorType = 0;
+    uint8_t safetyErrorType = 0;       // legacy fallback
+    uint8_t safetyErrorCause = 0;
     uint8_t safetyErrorIndex = 0;
+    uint8_t safetyErrorDetailCode = 0;
     char safetyText[96] = "";
+    char safetyTitle[64] = "";
+    char safetyEffectText[128] = "";
+    char safetyActionText[160] = "";
     bool summaryWarningPresent = false;
     bool actionCanWrite = false;
     bool mega1SelftestRetryAvailable = false;
@@ -922,12 +927,16 @@ static bool hmiStartupOverlayActive() {
     return g_startupSessionActive;
 }
 
+static uint8_t hmiSafetyCauseCode() {
+    return (g_dbg.safetyErrorCause != 0u) ? g_dbg.safetyErrorCause : g_dbg.safetyErrorType;
+}
+
 static bool hmiEmergencyOverlayActive() {
     return g_dbg.safetyLock &&
            g_dbg.safetyAckRequired &&
            (
                g_dbg.summaryEmergencyPresent ||
-               (g_dbg.safetyErrorType != 0u) ||
+               (hmiSafetyCauseCode() != 0u) ||
                g_dbg.safetyNotausActive ||
                (g_dbg.safetyBlockReason != 0u) ||
                (strncmp(g_dbg.uiTitleKey, "EMERG_", 6) == 0)
@@ -948,6 +957,37 @@ static bool hmiRetryOverlayActive() {
 }
 
 static const char* hmiEmergencyTitleText() {
+    static char buf[64];
+    if (g_dbg.safetyTitle[0] != '\0' && strcmp(g_dbg.safetyTitle, "-") != 0) {
+        return g_dbg.safetyTitle;
+    }
+
+    const uint8_t cause = hmiSafetyCauseCode();
+    switch (cause) {
+        case 1:  return "Falschfahrt SBHF";
+        case 2:  snprintf(buf, sizeof(buf), "SBHF Exit Timeout"); return buf;
+        case 3:  return "Weichenfehler SBHF";
+        case 4:
+            if (g_dbg.safetyErrorIndex != 0u) {
+                snprintf(buf, sizeof(buf), "Doppelbelegung Block %u", (unsigned)g_dbg.safetyErrorIndex);
+                return buf;
+            }
+            return "Doppelbelegung";
+        case 5:
+            if (g_dbg.safetyErrorIndex != 0u) {
+                snprintf(buf, sizeof(buf), "Kurzschluss Block %u", (unsigned)g_dbg.safetyErrorIndex);
+                return buf;
+            }
+            return "Kurzschluss";
+        case 6:  return "Controller-Fehler";
+        case 7:  return "Not-Aus";
+        case 8:  return "Controller-Fehler SBHF";
+        case 9:  return "Timeout Einfahrt SBHF";
+        case 10: return "Einfahrt SBHF in falsches Gleis";
+        default:
+            break;
+    }
+
     switch (g_dbg.safetyErrorType) {
         case 1:  return "NOT-AUS aktiv";
         case 2:  return "Kurzschluss / Ueberstrom";
@@ -962,6 +1002,51 @@ static const char* hmiEmergencyTitleText() {
     }
 }
 
+static void hmiBuildEmergencyBodyText(char* out, size_t outSize) {
+    if (!out || outSize == 0) return;
+
+    const char* effect = (g_dbg.safetyEffectText[0] != '\0' && strcmp(g_dbg.safetyEffectText, "-") != 0)
+        ? g_dbg.safetyEffectText
+        : "Notaus aktiv. Fahrspannung abgeschaltet.";
+
+    const char* action = nullptr;
+    if (g_dbg.safetyActionText[0] != '\0' && strcmp(g_dbg.safetyActionText, "-") != 0) {
+        action = g_dbg.safetyActionText;
+    } else {
+        switch (hmiSafetyCauseCode()) {
+            case 1:
+                action = "Trafos auf 0 drehen, Zug aus dem Nothalt entfernen, quittieren, Trafos wieder einschalten.";
+                break;
+            case 2:
+                action = "Zug auf dem aktiven SBHF-Gleis pruefen, Ursache beseitigen, quittieren.";
+                break;
+            case 3:
+                action = "Weichenlage pruefen, quittieren und bei Bedarf SBHF-Test starten.";
+                break;
+            case 4:
+                action = "Block pruefen, Ursache beseitigen und quittieren.";
+                break;
+            case 5:
+                action = "Kurzschluss beseitigen, quittieren, Trafos wieder einschalten.";
+                break;
+            case 8:
+                action = "SBHF-Zustand pruefen, quittieren und bei Bedarf SBHF-Test starten.";
+                break;
+            case 9:
+                action = "Einfahrt pruefen, Ursache beseitigen, quittieren.";
+                break;
+            case 10:
+                action = "Weichen- und Gleislage pruefen, Zug sichern, quittieren.";
+                break;
+            default:
+                action = "Bitte Stoerung pruefen und danach quittieren.";
+                break;
+        }
+    }
+
+    snprintf(out, outSize, "%s\n%s", effect, action);
+}
+
 static void hmiBuildEmergencyStatusText(char* out, size_t outSize) {
     if (!out || outSize == 0) {
         return;
@@ -972,58 +1057,24 @@ static void hmiBuildEmergencyStatusText(char* out, size_t outSize) {
             out,
             outSize,
             "%s\n"
-            "errorType=%u  errorIndex=%u",
+            "cause=%u  index=%u  detail=%u",
             g_dbg.safetyText,
-            (unsigned)g_dbg.safetyErrorType,
-            (unsigned)g_dbg.safetyErrorIndex
+            (unsigned)hmiSafetyCauseCode(),
+            (unsigned)g_dbg.safetyErrorIndex,
+            (unsigned)g_dbg.safetyErrorDetailCode
         );
         return;
     }
 
-    switch (g_dbg.safetyErrorType) {
-        case 1:
-            snprintf(out, outSize, "Nothalte-Gleis / NOT-AUS wurde ausgeloest.");
-            break;
-        case 2:
-            snprintf(out, outSize, "Kurzschluss oder Ueberstrom im Block erkannt.");
-            break;
-        case 3:
-            if (g_dbg.safetyErrorIndex <= 1u) {
-                snprintf(
-                    out,
-                    outSize,
-                    "Weichenfehler im Schattenbahnhof.\n"
-                    "Betroffene Weiche: W%u",
-                    (unsigned)(12u + g_dbg.safetyErrorIndex)
-                );
-            } else {
-                snprintf(
-                    out,
-                    outSize,
-                    "Weichenfehler im Schattenbahnhof.\n"
-                    "errorIndex=%u",
-                    (unsigned)g_dbg.safetyErrorIndex
-                );
-            }
-            break;
-        case 4:
-            snprintf(out, outSize, "SSR-Fehler erkannt.");
-            break;
-        case 5:
-            snprintf(out, outSize, "Doppelte Blockbelegung erkannt.");
-            break;
-        default:
-            snprintf(
-                out,
-                outSize,
-                "Safety-Lock aktiv.\n"
-                "blockReason=%u  errorType=%u  errorIndex=%u",
-                (unsigned)g_dbg.safetyBlockReason,
-                (unsigned)g_dbg.safetyErrorType,
-                (unsigned)g_dbg.safetyErrorIndex
-            );
-            break;
-    }
+    snprintf(
+        out,
+        outSize,
+        "Safety-Lock aktiv.\n"
+        "cause=%u  index=%u  detail=%u",
+        (unsigned)hmiSafetyCauseCode(),
+        (unsigned)g_dbg.safetyErrorIndex,
+        (unsigned)g_dbg.safetyErrorDetailCode
+    );
 }
 
 static bool hmiStartupAllDone() {
@@ -1033,7 +1084,7 @@ static bool hmiStartupAllDone() {
 
 static bool hmiCanSendEmergencySbhfSelftestNow() {
     const bool sbhfRecoveryRelevant =
-        (g_dbg.safetyErrorType == 3u) ||
+        (hmiSafetyCauseCode() == 3u) ||
         g_dbg.mega2SelftestRetryAvailable ||
         hmiHasMega2Defects();
 
@@ -2642,20 +2693,17 @@ static void hmiEmergencyOverlayUpdate() {
     if (!hmiEmergencyOverlayActive()) {
         return;
     }
-
     hmiOverlayUpdateIpLabel(g_ui.startupIpLabel);
 
+    char bodyBuf[320];
     char statusBuf[256];
+    hmiBuildEmergencyBodyText(bodyBuf, sizeof(bodyBuf));
     hmiBuildEmergencyStatusText(statusBuf, sizeof(statusBuf));
 
     lv_label_set_text(g_ui.startupTitle, hmiEmergencyTitleText());
 
     if (g_ui.startupText) {
-        lv_label_set_text(
-            g_ui.startupText,
-            "Bitte Stoerung pruefen und danach quittieren.\n"
-            "Power bleibt gesperrt, bis der Fehler quittiert wurde."
-        );
+        lv_label_set_text(g_ui.startupText, bodyBuf);
     }
 
     lv_label_set_text(g_ui.startupStatus, statusBuf);
@@ -2665,7 +2713,7 @@ static void hmiEmergencyOverlayUpdate() {
     lv_obj_clear_flag(g_ui.startupAckBtn, LV_OBJ_FLAG_HIDDEN);
 
     const bool showSbhfSelftest =
-        (g_dbg.safetyErrorType == 3u) ||
+        (hmiSafetyCauseCode() == 3u) ||
         g_dbg.mega2SelftestRetryAvailable ||
         hmiHasMega2Defects();
     if (showSbhfSelftest) {
@@ -3504,8 +3552,9 @@ static void hmiUiUpdate() {
     startupOverlayHash ^= g_dbg.safetyLock ? (1u << 8) : 0u;
     startupOverlayHash ^= g_dbg.safetyNotausActive ? (1u << 9) : 0u;
     startupOverlayHash ^= g_dbg.summaryEmergencyPresent ? (1u << 10) : 0u;
-    startupOverlayHash ^= ((uint32_t)g_dbg.safetyErrorType << 11);
+    startupOverlayHash ^= ((uint32_t)hmiSafetyCauseCode() << 11);
     startupOverlayHash ^= ((uint32_t)g_dbg.safetyErrorIndex << 16);
+    startupOverlayHash ^= ((uint32_t)g_dbg.safetyErrorDetailCode << 21);
     startupOverlayHash ^= ((uint32_t)(uint8_t)g_dbg.uiTitleKey[0] << 24);
     startupOverlayHash ^= g_dbg.systemReady ? (1u << 25) : 0u;
     startupOverlayHash ^= g_dbg.mega1Online ? (1u << 26) : 0u;
@@ -3626,9 +3675,14 @@ struct ParsedState {
         bool actionCanStartupConfirm = false;
         bool summaryEmergencyPresent = false;
         uint8_t safetyBlockReason = 0;
-        uint8_t safetyErrorType = 0;
+        uint8_t safetyErrorType = 0;   // legacy fallback
+        uint8_t safetyErrorCause = 0;
         uint8_t safetyErrorIndex = 0;
+        uint8_t safetyErrorDetailCode = 0;
         char safetyText[96] = "";
+        char safetyTitle[64] = "";
+        char safetyEffectText[128] = "";
+        char safetyActionText[160] = "";
         bool summaryWarningPresent = false;
         bool actionCanWrite = false;
         bool mega1SelftestRetryAvailable = false;
@@ -3703,8 +3757,13 @@ static void hmiSeedParsedStateFromCurrent(ParsedState& dst) {
     dst.summaryEmergencyPresent = g_dbg.summaryEmergencyPresent;
     dst.safetyBlockReason = g_dbg.safetyBlockReason;
     dst.safetyErrorType = g_dbg.safetyErrorType;
+    dst.safetyErrorCause = g_dbg.safetyErrorCause;
     dst.safetyErrorIndex = g_dbg.safetyErrorIndex;
+    dst.safetyErrorDetailCode = g_dbg.safetyErrorDetailCode;
     copyStr(dst.safetyText, sizeof(dst.safetyText), g_dbg.safetyText);
+    copyStr(dst.safetyTitle, sizeof(dst.safetyTitle), g_dbg.safetyTitle);
+    copyStr(dst.safetyEffectText, sizeof(dst.safetyEffectText), g_dbg.safetyEffectText);
+    copyStr(dst.safetyActionText, sizeof(dst.safetyActionText), g_dbg.safetyActionText);
     dst.summaryWarningPresent = g_dbg.summaryWarningPresent;
     dst.actionCanWrite = g_dbg.actionCanWrite;
     dst.mega1SelftestRetryAvailable = g_dbg.mega1SelftestRetryAvailable;
@@ -3777,8 +3836,13 @@ static void hmiApplyParsedState(const ParsedState& next) {
     g_dbg.summaryEmergencyPresent = next.summaryEmergencyPresent;
     g_dbg.safetyBlockReason = next.safetyBlockReason;
     g_dbg.safetyErrorType = next.safetyErrorType;
+    g_dbg.safetyErrorCause = next.safetyErrorCause;
     g_dbg.safetyErrorIndex = next.safetyErrorIndex;
+    g_dbg.safetyErrorDetailCode = next.safetyErrorDetailCode;
     copyStr(g_dbg.safetyText, sizeof(g_dbg.safetyText), next.safetyText);
+    copyStr(g_dbg.safetyTitle, sizeof(g_dbg.safetyTitle), next.safetyTitle);
+    copyStr(g_dbg.safetyEffectText, sizeof(g_dbg.safetyEffectText), next.safetyEffectText);
+    copyStr(g_dbg.safetyActionText, sizeof(g_dbg.safetyActionText), next.safetyActionText);
     g_dbg.summaryWarningPresent = next.summaryWarningPresent;
     g_dbg.actionCanWrite = next.actionCanWrite;
     g_dbg.mega1SelftestRetryAvailable = next.mega1SelftestRetryAvailable;
